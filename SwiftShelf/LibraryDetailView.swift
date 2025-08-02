@@ -15,71 +15,62 @@ struct LibraryDetailView: View {
     @State private var items: [LibraryItem] = []
     @State private var isLoadingItems = false
     @State private var coverImages: [String: Image] = [:]
-    @FocusState private var focusedItem: String?
+    @State private var selectedTabView: UIView? = nil
 
     var selectedLibraries: [SelectedLibrary] {
         config.selected
     }
 
+    private let thumbSize: CGFloat = 225
+
     var body: some View {
         VStack(spacing: 16) {
-            if !selectedLibraries.isEmpty {HStack {
-                Button {
-                    currentIndex = (currentIndex - 1 + selectedLibraries.count) % selectedLibraries.count
-                    Task { await loadItems() }
-                } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.title2.weight(.bold))
-                        .frame(width: 44, height: 44)
-                        .background(
-                            RoundedRectangle(cornerRadius: 22)
-                                .fill(Color(red: 0.25, green: 0.25, blue: 0.28).opacity(0.6))
-                        )
+            if !selectedLibraries.isEmpty {
+                HStack {
+                    Spacer()
+                    HStack(spacing: 80) {
+                        ForEach(Array(selectedLibraries.enumerated()), id: \.element.id) { idx, lib in
+                            Button {
+                                guard currentIndex != idx else { return }
+                                currentIndex = idx
+                                coverImages.removeAll()
+                                items = []
+                                Task { await loadItems() }
+                            } label: {
+                                Text(lib.name)
+                                    .font(.headline)
+                                    .padding(.vertical, 6)
+                                    .padding(.horizontal, 16)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 12)
+                                            .fill(idx == currentIndex ? Color.white.opacity(0.15) : Color.clear)
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundColor(idx == currentIndex ? .white : .gray)
+                            .scaleEffect(idx == currentIndex ? 1.07 : 1.0)
+                            .fixedSize()
+                        }
+                    }
+                    Spacer()
                 }
-                .buttonStyle(.plain)
-                .focusable(true)
-
-                Spacer()
-
-                Text(selectedLibraries[currentIndex].name)
-                    .font(.title2)
-                    .bold()
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .frame(maxWidth: 400)
-
-                Spacer()
-
-                Button {
-                    currentIndex = (currentIndex + 1) % selectedLibraries.count
-                    Task { await loadItems() }
-                } label: {
-                    Image(systemName: "chevron.right")
-                        .font(.title2.weight(.bold))
-                        .frame(width: 44, height: 44)
-                        .background(
-                            RoundedRectangle(cornerRadius: 22)
-                                .fill(Color(red: 0.25, green: 0.25, blue: 0.28).opacity(0.6))
-                        )
-                }
-                .buttonStyle(.plain)
-                .focusable(true)
-            }
-            .padding(.horizontal)
+                .padding(.horizontal)
             }
 
             Divider()
-            
-            let thumbSize: CGFloat = 90
 
             if isLoadingItems {
                 ProgressView("Loading items...")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                LibraryCarouselView(items: items,
-                                    coverImages: $coverImages,
-                                    loadCover: { await vm.loadCover(for: $0) })
-                    .environmentObject(vm)
-                    .frame(height: 400)
+                LibraryCarouselView(
+                    items: items,
+                    coverImages: $coverImages,
+                    loadCover: { await vm.loadCover(for: $0) },
+                    thumbSize: thumbSize
+                )
+                .environmentObject(vm)
+                .frame(height: 400)
             }
 
             Spacer()
@@ -88,12 +79,6 @@ struct LibraryDetailView: View {
         .onAppear {
             Task { await loadItems() }
         }
-    }
-    
-    func makeCoverURL(from coverPath: String) -> URL? {
-        guard let base = URL(string: vm.host) else { return nil }
-        let trimmed = coverPath.hasPrefix("/") ? String(coverPath.dropFirst()) : coverPath
-        return base.appendingPathComponent(trimmed)
     }
 
     func formatDuration(_ seconds: Double) -> String {
@@ -107,11 +92,15 @@ struct LibraryDetailView: View {
             return String(format: "%d:%02d", mins, secs)
         }
     }
-    
+
     private func loadItems() async {
         guard !selectedLibraries.isEmpty else { return }
+        if isLoadingItems { return } // prevent reentrant
         isLoadingItems = true
+        defer { isLoadingItems = false }
+
         let lib = selectedLibraries[currentIndex]
+        print(">>> loadItems for library:", lib.name, "id:", lib.id)
         if let fetched = await vm.fetchRecentItems(forLibrary: lib.id, limit: 10) {
             items = fetched
             await withTaskGroup(of: (String, Image?).self) { group in
@@ -130,21 +119,22 @@ struct LibraryDetailView: View {
         } else {
             items = []
         }
-        isLoadingItems = false
     }
-    
+
+    // MARK: - Carousel subview
+
     struct LibraryCarouselView: View {
         @EnvironmentObject var vm: ViewModel
         let items: [LibraryItem]
         @Binding var coverImages: [String: Image]
         var loadCover: (LibraryItem) async -> Image?
+        let thumbSize: CGFloat
 
-        private let thumbSize: CGFloat = 225
-        private let spacing: CGFloat = 24
+        private let spacing: CGFloat = 100
 
         var body: some View {
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: spacing) {
+                LazyHStack(spacing: spacing) {
                     ForEach(items) { item in
                         CarouselItemView(
                             item: item,
@@ -159,11 +149,12 @@ struct LibraryDetailView: View {
                                 print("Selected item:", selected.title)
                             }
                         )
-                        .frame(width: thumbSize + 75)
+                        .frame(width: thumbSize)
                     }
                 }
                 .padding(.horizontal, 40)
-            }      }
+            }
+        }
     }
 
     struct CarouselItemView: View {
@@ -205,22 +196,25 @@ struct LibraryDetailView: View {
                     .animation(.easeInOut(duration: 0.15), value: isFocused)
 
                     Text(item.title)
-                        .font(.system(size: 20, weight: .semibold))
+                        .font(.system(size: 14, weight: .semibold))
                         .lineLimit(1)
+                        .truncationMode(.tail)
                         .foregroundColor(.primary)
                         .frame(maxWidth: thumbSize, alignment: .leading)
+
                     if let author = item.authorNameLF {
                         Text(author)
                             .lineLimit(1)
                             .foregroundColor(.secondary)
-                            .font(.system(size: 20, weight: .semibold))
+                            .font(.system(size: 12, weight: .regular))
                             .frame(maxWidth: thumbSize, alignment: .leading)
                     }
+
                     if let dur = item.duration {
-                        Text("\(formatDuration(dur))")
+                        Text(formatDuration(dur))
                             .lineLimit(1)
                             .foregroundColor(.gray)
-                            .font(.system(size: 20, weight: .semibold))
+                            .font(.system(size: 12, weight: .regular))
                             .frame(maxWidth: thumbSize, alignment: .leading)
                     }
                 }
@@ -229,6 +223,7 @@ struct LibraryDetailView: View {
             }
             .buttonStyle(.plain)
         }
+
         private func formatDuration(_ seconds: Double) -> String {
             let intSec = Int(seconds)
             let hrs = intSec / 3600

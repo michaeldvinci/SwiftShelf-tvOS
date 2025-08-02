@@ -13,8 +13,9 @@ SwiftShelf is a tvOS Audiobookshelf client built in SwiftUI. It combines fast, f
   ![Library Select](_res/library-select.png)
 
 - **Carousel-style Recent Items View**  
-  Browse the most recently updated items in a horizontally scrolling, focus-aware carousel. Artwork is large and square, with title, author, and runtime displayed beneath.  
-  ![Library Items](_res/library-view.png)
+  Browse the most recently updated items in a horizontally scrolling, focus-aware carousel. Artwork is large and square, with title, author, and runtime displayed beneath.
+  ![Library view 1](_res/library-view-1.png)
+  ![Library view 2](_res/library-view-2.png)
 
 - **Authenticated Cover Fetching**  
   Covers are loaded securely via the Audiobookshelf `/cover` endpoint with the same credentials, and cached in-memory for smooth scrolling.
