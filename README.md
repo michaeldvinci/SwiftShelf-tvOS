@@ -1,5 +1,7 @@
 # SwiftShelf
 
+![banner](_res/banner.jpg)
+
 SwiftShelf is a tvOS Audiobookshelf client built in SwiftUI. It combines fast, focused navigation of your audiobook libraries with authenticated playback [eventually], presenting your collection in a sleek carousel interface.
 
 ## Key Features
