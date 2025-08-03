@@ -10,25 +10,39 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject var vm: ViewModel
     @EnvironmentObject var config: LibraryConfig
+    @State private var selectedTabIndex = 0
+    @State private var refreshTrigger = 0
     @State private var showSelection = false
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if !config.selected.isEmpty {
-                    LibraryDetailView()
+        if config.selected.isEmpty {
+            connectionSelectionPane
+        } else {
+            TabView(selection: $selectedTabIndex) {
+                ForEach(Array(config.selected.enumerated()), id: \.element.id) { idx, lib in
+                    LibraryDetailView(library: lib, onRefresh: refreshTrigger)
                         .environmentObject(vm)
                         .environmentObject(config)
-                } else {
-                    connectionSelectionPane
+                        .tabItem {
+                            Label(lib.name, systemImage: "books.vertical")
+                        }
+                        .tag(idx)
                 }
-            }
-            .padding()
-            .navigationTitle("Libraries")
-            .navigationDestination(isPresented: $showSelection) {
-                LibrarySelectionView()
-                    .environmentObject(vm)
-                    .environmentObject(config)
+                Button(action: {
+                    refreshTrigger += 1
+                    selectedTabIndex = 0
+                }) {
+                    Image(systemName: "arrow.clockwise.circle.fill")
+                        .resizable()
+                        .frame(width: 50, height: 50)
+                        .foregroundStyle(Color.white)
+                        .padding()
+                }
+                .tabItem {
+                    Image(systemName: "arrow.clockwise")
+                    Text("Settings")
+                }
+                .tag(config.selected.count)
             }
         }
     }
@@ -102,6 +116,11 @@ struct ContentView: View {
                 }
             }
             Spacer()
+        }
+        .sheet(isPresented: $showSelection) {
+            LibrarySelectionView()
+                .environmentObject(vm)
+                .environmentObject(config)
         }
     }
 }

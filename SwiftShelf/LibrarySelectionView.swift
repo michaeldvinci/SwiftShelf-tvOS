@@ -59,9 +59,13 @@ struct LibrarySelectionView: View {
             .padding()
             .navigationTitle("Choose Libraries")
             .navigationDestination(isPresented: $showDetail) {
-                LibraryDetailView()
-                    .environmentObject(vm)
-                    .environmentObject(config)
+                if let firstSelected = config.selected.first {
+                    LibraryDetailView(library: firstSelected)
+                        .environmentObject(vm)
+                        .environmentObject(config)
+                } else {
+                    EmptyView()
+                }
             }
             .onAppear {
                 if !config.selected.isEmpty {

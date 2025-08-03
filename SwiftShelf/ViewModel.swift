@@ -15,7 +15,7 @@ struct LibrarySummary: Identifiable, Codable {
 }
 
 class ViewModel: ObservableObject {
-    @Published var host: String = "https://library.sample.net"
+    @Published var host: String = "https://sample.abs.host"
     @Published var apiKey: String = "your-real-api-key"
     @Published var libraries: [LibrarySummary] = []
     @Published var errorMessage: String?
