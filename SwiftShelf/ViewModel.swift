@@ -15,6 +15,17 @@ struct LibrarySummary: Identifiable, Codable {
 }
 
 class ViewModel: ObservableObject {
+    @Published var refreshToken: Int = 0
+    @AppStorage("libraryItemLimit") var libraryItemLimit: Int = 10 {
+        didSet {
+            if oldValue != libraryItemLimit {
+                Task { [weak self] in
+                    await self?.onLibraryItemLimitChanged()
+                }
+            }
+        }
+    }
+
     @Published var host: String = "https://sample.abs.host"
     @Published var apiKey: String = "your-real-api-key"
     @Published var libraries: [LibrarySummary] = []
@@ -68,7 +79,14 @@ class ViewModel: ObservableObject {
         }
     }
     
-    func fetchItems(forLibrary libraryId: String, limit: Int = 10, sortBy: String, descBy: String) async -> [LibraryItem]? {
+    /// Fetch items for a given library.
+    /// - Parameters:
+    ///   - libraryId: The library identifier.
+    ///   - limit: Optional limit on number of items to fetch; if nil, uses user-configured libraryItemLimit.
+    ///   - sortBy: Field to sort by.
+    ///   - descBy: Field for descending sort.
+    /// - Returns: Array of LibraryItem or nil on failure.
+    func fetchItems(forLibrary libraryId: String, limit: Int? = nil, sortBy: String, descBy: String) async -> [LibraryItem]? {
         guard !host.isEmpty, !apiKey.isEmpty else {
             errorMessage = "Host/API key missing"
             return nil
@@ -82,8 +100,10 @@ class ViewModel: ObservableObject {
             return nil
         }
         components.path = "/api/libraries/\(libraryId)/items"
+        
+        let limitParam = limit ?? libraryItemLimit
         components.queryItems = [
-            URLQueryItem(name: "limit", value: "\(limit)"),
+            URLQueryItem(name: "limit", value: "\(limitParam)"),
             URLQueryItem(name: "sort", value: sortBy),
             URLQueryItem(name: "desc", value: descBy)
         ]
@@ -126,10 +146,10 @@ class ViewModel: ObservableObject {
         }
     }
     
-    private var coverCache: [String: Image] = [:]
+    private var coverCache: [String: (Image, UIImage)] = [:]
     
     @MainActor
-    func loadCover(for item: LibraryItem) async -> Image? {
+    func loadCover(for item: LibraryItem) async -> (Image, UIImage)? {
         if let cached = coverCache[item.id] {
             return cached
         }
@@ -150,13 +170,21 @@ class ViewModel: ObservableObject {
             
             if let ui = UIImage(data: data) {
                 let image = Image(uiImage: ui)
-                coverCache[item.id] = image
-                return image
+                coverCache[item.id] = (image, ui)
+                return (image, ui)
             }
         } catch {
             print("Cover load error:", error)
         }
         return nil
+    }
+    
+    /// Called when the user changes the library item limit in settings.
+    /// This triggers a refresh token increment that the UI can observe
+    /// to reload views using the updated libraryItemLimit.
+    @MainActor
+    private func onLibraryItemLimitChanged() async {
+        refreshToken += 1
     }
 }
 

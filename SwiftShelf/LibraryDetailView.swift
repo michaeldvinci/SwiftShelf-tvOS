@@ -11,14 +11,11 @@ import Combine
 
 struct LibraryItemDetailPopup: View {
     let item: LibraryItem
-    let cover: Image?
+    let cover: (Image, UIImage)?
     var body: some View {
         VStack(spacing: 24) {
-            if let cover = cover {
-                cover
-                    .resizable()
-                    .scaledToFit()
-                    .frame(height: 220)
+            if let (img, uiImg) = cover {
+                CoverArtView(image: img, uiImage: uiImg, maxWidth: 220, maxHeight: 220)
                     .cornerRadius(14)
             }
             Text(item.title).font(.title.bold())
@@ -28,7 +25,7 @@ struct LibraryItemDetailPopup: View {
             if let series = item.seriesName {
                 Text(series).font(.subheadline)
             }
-            if let duration = item.duration {
+            if let duration = item.duration, duration > 0 {
                 Text("Duration: \(formatDuration(duration))").font(.footnote)
             }
             if let added = item.addedAt {
@@ -65,16 +62,14 @@ struct LibraryDetailView: View {
     @State private var unfinished: [LibraryItem] = []
     @State private var isLoadingItems = false
     @State private var isLoadingUnfinished = false
-    @State private var coverImages: [String: Image] = [:]
+    @State private var coverImages: [String: (Image, UIImage)] = [:]
 
     @State private var selectedItem: LibraryItem? = nil
     @State private var showItemPopup = false
 
-    var onRefresh: Int = 0
-
     private let thumbSize: CGFloat = 225
 
-    private var selectedCover: Image? { selectedItem.flatMap { coverImages[$0.id] } }
+    private var selectedCover: (Image, UIImage)? { selectedItem.flatMap { coverImages[$0.id] } }
 
     var body: some View {
         VStack(spacing: 40) {
@@ -84,7 +79,7 @@ struct LibraryDetailView: View {
             ScrollView(.vertical, showsIndicators: true) {
                 VStack(spacing: 32) {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Recent Items")
+                        Text("Recent")
                             .font(.headline)
                             .padding(.horizontal)
 
@@ -109,7 +104,7 @@ struct LibraryDetailView: View {
                         }
                     }
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Continue Listening")
+                        Text("Continue")
                             .font(.headline)
                             .padding(.horizontal)
 
@@ -150,7 +145,7 @@ struct LibraryDetailView: View {
         .onAppear {
             Task { await loadItems() }
         }
-        .onChange(of: onRefresh) { _, _ in
+        .onChange(of: vm.refreshToken) { _, _ in
             Task { await loadItems() }
         }
     }
@@ -162,18 +157,18 @@ struct LibraryDetailView: View {
 
         isLoadingItems = true
         defer { isLoadingItems = false }
-        if let fetched = await vm.fetchItems(forLibrary: lib.id, limit: 10, sortBy: "addedAt", descBy: "1") {
+        if let fetched = await vm.fetchItems(forLibrary: lib.id, limit: vm.libraryItemLimit, sortBy: "addedAt", descBy: "1") {
             items = fetched
-            await withTaskGroup(of: (String, Image?).self) { group in
+            await withTaskGroup(of: (String, (Image, UIImage)?).self) { group in
                 for item in fetched {
                     group.addTask {
-                        let image = await vm.loadCover(for: item)
-                        return (item.id, image)
+                        let imageTuple = await vm.loadCover(for: item)
+                        return (item.id, imageTuple)
                     }
                 }
-                for await (id, image) in group {
-                    if let img = image {
-                        coverImages[id] = img
+                for await (id, imageTuple) in group {
+                    if let imgTup = imageTuple {
+                        coverImages[id] = imgTup
                     }
                 }
             }
@@ -182,18 +177,18 @@ struct LibraryDetailView: View {
         }
 
         isLoadingUnfinished = true
-        if let fetchedUnfinished = await vm.fetchItems(forLibrary: lib.id, limit: 10, sortBy: "updatedAt", descBy: "1") {
+        if let fetchedUnfinished = await vm.fetchItems(forLibrary: lib.id, limit: vm.libraryItemLimit, sortBy: "updatedAt", descBy: "1") {
             unfinished = fetchedUnfinished
-            await withTaskGroup(of: (String, Image?).self) { group in
+            await withTaskGroup(of: (String, (Image, UIImage)?).self) { group in
                 for item in fetchedUnfinished {
                     group.addTask {
-                        let image = await vm.loadCover(for: item)
-                        return (item.id, image)
+                        let imageTuple = await vm.loadCover(for: item)
+                        return (item.id, imageTuple)
                     }
                 }
-                for await (id, image) in group {
-                    if let img = image {
-                        coverImages[id] = img
+                for await (id, imageTuple) in group {
+                    if let imgTup = imageTuple {
+                        coverImages[id] = imgTup
                     }
                 }
             }
@@ -206,8 +201,8 @@ struct LibraryDetailView: View {
     struct LibraryCarouselView: View {
         @EnvironmentObject var vm: ViewModel
         let items: [LibraryItem]
-        @Binding var coverImages: [String: Image]
-        var loadCover: (LibraryItem) async -> Image?
+        @Binding var coverImages: [String: (Image, UIImage)]
+        var loadCover: (LibraryItem) async -> (Image, UIImage)?
         let thumbSize: CGFloat
         let onSelect: (LibraryItem) -> Void
 
@@ -221,8 +216,8 @@ struct LibraryDetailView: View {
                             item: item,
                             cover: coverImages[item.id],
                             loadCover: {
-                                if let image = await loadCover(item) {
-                                    coverImages[item.id] = image
+                                if let imageTuple = await loadCover(item) {
+                                    coverImages[item.id] = imageTuple
                                 }
                             },
                             thumbSize: thumbSize,
@@ -240,7 +235,7 @@ struct LibraryDetailView: View {
 
     struct CarouselItemView: View {
         let item: LibraryItem
-        var cover: Image?
+        var cover: (Image, UIImage)?
         let loadCover: () async -> Void
         let thumbSize: CGFloat
         let onSelect: () -> Void
@@ -253,13 +248,10 @@ struct LibraryDetailView: View {
             } label: {
                 VStack(alignment: .leading, spacing: 8) {
                     ZStack {
-                        if let img = cover {
-                            img
-                                .resizable()
-                                .scaledToFill()
-                                .frame(width: thumbSize, height: thumbSize)
-                                .clipped()
+                        if let (img, uiImg) = cover {
+                            CoverArtView(image: img, uiImage: uiImg, maxWidth: thumbSize, maxHeight: thumbSize)
                                 .cornerRadius(8)
+                                .frame(width: thumbSize, height: thumbSize)
                         } else {
                             Color.gray
                                 .frame(width: thumbSize, height: thumbSize)
@@ -290,7 +282,7 @@ struct LibraryDetailView: View {
                             .frame(maxWidth: thumbSize, alignment: .leading)
                     }
 
-                    if let dur = item.duration {
+                    if let dur = item.duration, dur > 0 {
                         Text(formatDuration(dur))
                             .lineLimit(1)
                             .foregroundColor(.gray)

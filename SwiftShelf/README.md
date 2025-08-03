@@ -1,6 +1,6 @@
 # SwiftShelf
 
-![banner](_res/banner.jpg)
+![banner](../_res/banner.jpg)
 
 SwiftShelf is a tvOS Audiobookshelf client built in SwiftUI. It combines fast, focused navigation of your audiobook libraries with authenticated playback [eventually], presenting your collection in a sleek carousel interface.
 
@@ -11,20 +11,20 @@ SwiftShelf is a tvOS Audiobookshelf client built in SwiftUI. It combines fast, f
 
 - **Library Selection & Persistence**  
   Choose from your available Audiobookshelf libraries. The app remembers your last selected library and skips the selector if already chosen.
-  ![Library Select](_res/library-select.png)
+  ![Library Select](../_res/library-select.png)
 
 - **Recent Items Carousel**  
   Browse your most recently added audiobooks in a horizontally scrolling, focus-aware carousel. Each item displays large cover artwork, title, author, and runtime.
-  ![Library view 1](_res/library-view-1.png)
-  ![Library view 2](_res/library-view-2.png)
+  ![Library view 1](../_res/library-view-1.png)
+  ![Library view 2](../_res/library-view-2.png)
 
 - **User-Configurable Item Limit**  
   Adjust how many recent/in-progress items are shown per library (saved as a persistent app setting).
-  ![Settings](_res/settings.png)
+  ![Settings](../_res/settings.png)
 
 - **Search**  
   Similar search functionality to the ABS web client
-  ![Search](_res/search.png)
+  ![Search](../_res/search.png)
 
 - **Continue Listening (In-Progress) Carousel**  
   A separate carousel shows items you haven't finished, helping you pick up right where you left off.
