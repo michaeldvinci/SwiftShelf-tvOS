@@ -15,41 +15,48 @@ struct ContentView: View {
     @State private var showSelection = false
 
     var body: some View {
-        if config.selected.isEmpty {
-            connectionSelectionPane
-        } else {
-            TabView(selection: $selectedTabIndex) {
-                ForEach(Array(config.selected.enumerated()), id: \.element.id) { idx, lib in
-                    LibraryDetailView(library: lib, onRefresh: refreshTrigger)
-                        .environmentObject(vm)
-                        .environmentObject(config)
-                        .tabItem {
-                            Label(lib.name, systemImage: "books.vertical")
-                        }
-                        .tag(idx)
+        Group {
+            if config.selected.isEmpty {
+                connectionSelectionPane
+            } else {
+                TabView(selection: $selectedTabIndex) {
+                    ForEach(Array(config.selected.enumerated()), id: \.element.id) { idx, lib in
+                        LibraryDetailView(library: lib, onRefresh: refreshTrigger)
+                            .environmentObject(vm)
+                            .environmentObject(config)
+                            .tabItem {
+                                Label(lib.name, systemImage: "books.vertical")
+                            }
+                            .tag(idx)
+                    }
+                    Button(action: {
+                        refreshTrigger += 1
+                        selectedTabIndex = 0
+                    }) {
+                        Image(systemName: "arrow.clockwise.circle.fill")
+                            .resizable()
+                            .frame(width: 50, height: 50)
+                            .foregroundStyle(Color.white)
+                            .padding()
+                    }
+                    .tabItem {
+                        Image(systemName: "arrow.clockwise")
+                        Text("Settings")
+                    }
+                    .tag(config.selected.count)
                 }
-                Button(action: {
-                    refreshTrigger += 1
-                    selectedTabIndex = 0
-                }) {
-                    Image(systemName: "arrow.clockwise.circle.fill")
-                        .resizable()
-                        .frame(width: 50, height: 50)
-                        .foregroundStyle(Color.white)
-                        .padding()
-                }
-                .tabItem {
-                    Image(systemName: "arrow.clockwise")
-                    Text("Settings")
-                }
-                .tag(config.selected.count)
             }
+        }
+        .sheet(isPresented: $showSelection) {
+            LibrarySelectionView(isPresented: $showSelection)
+                .environmentObject(vm)
+                .environmentObject(config)
         }
     }
 
     private var connectionSelectionPane: some View {
         VStack(spacing: 16) {
-            Text("Audiobookshelf Libraries").font(.title2)
+            Text("SwiftShelf").font(.title2)
             VStack(spacing: 8) {
                 TextField("Host", text: Binding(
                     get: { vm.host },
@@ -116,11 +123,6 @@ struct ContentView: View {
                 }
             }
             Spacer()
-        }
-        .sheet(isPresented: $showSelection) {
-            LibrarySelectionView()
-                .environmentObject(vm)
-                .environmentObject(config)
         }
     }
 }

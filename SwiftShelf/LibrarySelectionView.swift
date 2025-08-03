@@ -11,15 +11,13 @@ struct LibrarySelectionView: View {
     @EnvironmentObject var vm: ViewModel
     @EnvironmentObject var config: LibraryConfig
 
+    @Binding var isPresented: Bool
+
     @State private var showDetail = false
 
     var body: some View {
         NavigationStack {
             VStack {
-                Text("Select Libraries")
-                    .font(.title2)
-                    .padding(.bottom, 8)
-
                 List {
                     ForEach(vm.libraries) { lib in
                         let sel = SelectedLibrary(id: lib.id, name: lib.name)
@@ -33,7 +31,6 @@ struct LibrarySelectionView: View {
                                     .foregroundColor(config.contains(sel) ? .green : .gray)
                                 VStack(alignment: .leading) {
                                     Text(lib.name).font(.headline)
-                                    Text(lib.id).font(.caption).foregroundColor(.secondary)
                                 }
                                 Spacer()
                             }
@@ -43,18 +40,6 @@ struct LibrarySelectionView: View {
                     }
                 }
                 .listStyle(.plain)
-
-                HStack {
-                    Text("Selected: \(config.selected.map { $0.name }.joined(separator: ", "))")
-                        .lineLimit(2)
-                        .truncationMode(.tail)
-                    Spacer()
-                    Button("Next") {
-                        showDetail = true
-                    }
-                    .disabled(config.selected.isEmpty)
-                }
-                .padding()
             }
             .padding()
             .navigationTitle("Choose Libraries")
@@ -67,11 +52,7 @@ struct LibrarySelectionView: View {
                     EmptyView()
                 }
             }
-            .onAppear {
-                if !config.selected.isEmpty {
-                    showDetail = true
-                }
-            }
         }
     }
 }
+
