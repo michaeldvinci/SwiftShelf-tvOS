@@ -13,9 +13,10 @@ struct LibraryDetailView: View {
 
     @State private var currentIndex: Int = 0
     @State private var items: [LibraryItem] = []
+    @State private var unfinished: [LibraryItem] = []
     @State private var isLoadingItems = false
+    @State private var isLoadingUnfinished = false
     @State private var coverImages: [String: Image] = [:]
-    @State private var selectedTabView: UIView? = nil
 
     var selectedLibraries: [SelectedLibrary] {
         config.selected
@@ -24,17 +25,20 @@ struct LibraryDetailView: View {
     private let thumbSize: CGFloat = 225
 
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 40) {
+
+            // Tabs
             if !selectedLibraries.isEmpty {
                 HStack {
                     Spacer()
-                    HStack(spacing: 80) {
+                    HStack(spacing: 48) {
                         ForEach(Array(selectedLibraries.enumerated()), id: \.element.id) { idx, lib in
                             Button {
                                 guard currentIndex != idx else { return }
                                 currentIndex = idx
                                 coverImages.removeAll()
                                 items = []
+                                unfinished = []
                                 Task { await loadItems() }
                             } label: {
                                 Text(lib.name)
@@ -59,49 +63,80 @@ struct LibraryDetailView: View {
 
             Divider()
 
-            if isLoadingItems {
-                ProgressView("Loading items...")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                LibraryCarouselView(
-                    items: items,
-                    coverImages: $coverImages,
-                    loadCover: { await vm.loadCover(for: $0) },
-                    thumbSize: thumbSize
-                )
-                .environmentObject(vm)
-                .frame(height: 400)
+            ScrollView(.vertical, showsIndicators: true) {
+                VStack(spacing: 32) {
+                    // Recent Items
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Recent Items")
+                            .font(.headline)
+                            .padding(.horizontal)
+
+                        if isLoadingItems {
+                            ProgressView()
+                                .padding(.horizontal)
+                        } else if items.isEmpty {
+                            Text("No recent items").foregroundColor(.secondary).padding(.horizontal)
+                        } else {
+                            LibraryCarouselView(
+                                items: items,
+                                coverImages: $coverImages,
+                                loadCover: { await vm.loadCover(for: $0) },
+                                thumbSize: thumbSize
+                            )
+                            .environmentObject(vm)
+                            .frame(height: 350)
+                        }
+                    }
+                    // Continue Listening
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Continue Listening")
+                            .font(.headline)
+                            .padding(.horizontal)
+
+                        if isLoadingUnfinished {
+                            ProgressView()
+                                .padding(.horizontal)
+                        } else if unfinished.isEmpty {
+                            Text("No in-progress items")
+                                .foregroundColor(.secondary)
+                                .padding(.horizontal)
+                        } else {
+                            LibraryCarouselView(
+                                items: unfinished,
+                                coverImages: $coverImages,
+                                loadCover: { await vm.loadCover(for: $0) },
+                                thumbSize: thumbSize
+                            )
+                            .environmentObject(vm)
+                            .frame(height: 350)
+                        }
+                    }
+                }
+                .padding(.vertical, 8)
             }
 
             Spacer()
         }
-        .navigationTitle("Audiobookshelf")
+        //.navigationTitle("Audiobookshelf")
         .onAppear {
             Task { await loadItems() }
         }
-    }
-
-    func formatDuration(_ seconds: Double) -> String {
-        let intSec = Int(seconds)
-        let hrs = intSec / 3600
-        let mins = (intSec % 3600) / 60
-        let secs = intSec % 60
-        if hrs > 0 {
-            return String(format: "%d:%02d:%02d", hrs, mins, secs)
-        } else {
-            return String(format: "%d:%02d", mins, secs)
-        }
+        .navigationTitle("")
     }
 
     private func loadItems() async {
         guard !selectedLibraries.isEmpty else { return }
-        if isLoadingItems { return } // prevent reentrant
-        isLoadingItems = true
-        defer { isLoadingItems = false }
+
+        // Prevent overlapping loads
+        if isLoadingItems || isLoadingUnfinished { return }
 
         let lib = selectedLibraries[currentIndex]
-        print(">>> loadItems for library:", lib.name, "id:", lib.id)
-        if let fetched = await vm.fetchRecentItems(forLibrary: lib.id, limit: 10) {
+//        print(">>> loadItems for library:", lib.name, "id:", lib.id)
+
+        // Recent
+        isLoadingItems = true
+        defer { isLoadingItems = false }
+        if let fetched = await vm.fetchItems(forLibrary: lib.id, limit: 10, sortBy: "addedAt", descBy: "1") {
             items = fetched
             await withTaskGroup(of: (String, Image?).self) { group in
                 for item in fetched {
@@ -119,9 +154,28 @@ struct LibraryDetailView: View {
         } else {
             items = []
         }
-    }
 
-    // MARK: - Carousel subview
+        isLoadingUnfinished = true
+        if let fetchedUnfinished = await vm.fetchItems(forLibrary: lib.id, limit: 10, sortBy: "updatedAt", descBy: "1") {
+            unfinished = fetchedUnfinished
+            await withTaskGroup(of: (String, Image?).self) { group in
+                for item in fetchedUnfinished {
+                    group.addTask {
+                        let image = await vm.loadCover(for: item)
+                        return (item.id, image)
+                    }
+                }
+                for await (id, image) in group {
+                    if let img = image {
+                        coverImages[id] = img
+                    }
+                }
+            }
+        } else {
+            unfinished = []
+        }
+        isLoadingUnfinished = false
+    }
 
     struct LibraryCarouselView: View {
         @EnvironmentObject var vm: ViewModel
@@ -130,7 +184,7 @@ struct LibraryDetailView: View {
         var loadCover: (LibraryItem) async -> Image?
         let thumbSize: CGFloat
 
-        private let spacing: CGFloat = 100
+        private let spacing: CGFloat = 95
 
         var body: some View {
             ScrollView(.horizontal, showsIndicators: false) {
@@ -146,7 +200,7 @@ struct LibraryDetailView: View {
                             },
                             thumbSize: thumbSize,
                             onSelect: { selected in
-                                print("Selected item:", selected.title)
+//                                print("Selected item:", selected.title)
                             }
                         )
                         .frame(width: thumbSize)
@@ -198,7 +252,6 @@ struct LibraryDetailView: View {
                     Text(item.title)
                         .font(.system(size: 14, weight: .semibold))
                         .lineLimit(1)
-                        .truncationMode(.tail)
                         .foregroundColor(.primary)
                         .frame(maxWidth: thumbSize, alignment: .leading)
 
@@ -206,7 +259,7 @@ struct LibraryDetailView: View {
                         Text(author)
                             .lineLimit(1)
                             .foregroundColor(.secondary)
-                            .font(.system(size: 12, weight: .regular))
+                            .font(.system(size: 14, weight: .regular))
                             .frame(maxWidth: thumbSize, alignment: .leading)
                     }
 
@@ -214,7 +267,7 @@ struct LibraryDetailView: View {
                         Text(formatDuration(dur))
                             .lineLimit(1)
                             .foregroundColor(.gray)
-                            .font(.system(size: 12, weight: .regular))
+                            .font(.system(size: 14, weight: .regular))
                             .frame(maxWidth: thumbSize, alignment: .leading)
                     }
                 }
@@ -237,3 +290,4 @@ struct LibraryDetailView: View {
         }
     }
 }
+

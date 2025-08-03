@@ -10,6 +10,7 @@ import Foundation
 struct LibraryItem: Identifiable, Codable {
     let id: String
     let media: Media?
+    let userMediaProgress: UserMediaProgress?
 
     var title: String {
         media?.metadata.title ?? "Untitled"
@@ -26,6 +27,9 @@ struct LibraryItem: Identifiable, Codable {
     var duration: Double? {
         media?.duration
     }
+    
+    let addedAt: Double?
+    let updatedAt: Double?
 
     struct Media: Codable {
         let duration: Double?
@@ -54,3 +58,7 @@ struct ResultsWrapper: Codable {
     let results: [LibraryItem]
 }
 
+struct UserMediaProgress: Codable {
+    let progress: Double?
+    let isFinished: Bool?
+}

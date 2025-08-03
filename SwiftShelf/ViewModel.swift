@@ -15,15 +15,13 @@ struct LibrarySummary: Identifiable, Codable {
 }
 
 class ViewModel: ObservableObject {
-//    @Published var host: String = "https://library.sample.net"
-//    @Published var apiKey: String = "your-real-api-key"
     @Published var host: String = "https://library.sample.net"
-    @Published var apiKey: String = "sample"
+    @Published var apiKey: String = "your-real-api-key"
     @Published var libraries: [LibrarySummary] = []
     @Published var errorMessage: String?
     @Published var isLoadingLibraries = false
     @Published var isLoadingItems = false
-
+    
     struct LibrariesWrapper: Codable {
         let libraries: [LibraryResponse]
     }
@@ -31,7 +29,7 @@ class ViewModel: ObservableObject {
         let id: String
         let name: String
     }
-
+    
     func connect() async {
         guard !host.isEmpty, !apiKey.isEmpty else {
             errorMessage = "Host and API key required"
@@ -40,7 +38,7 @@ class ViewModel: ObservableObject {
         isLoadingLibraries = true
         errorMessage = nil
         defer { isLoadingLibraries = false }
-
+        
         guard var components = URLComponents(string: host) else {
             errorMessage = "Invalid host URL"
             return
@@ -50,11 +48,11 @@ class ViewModel: ObservableObject {
             errorMessage = "Failed to construct URL"
             return
         }
-
+        
         var req = URLRequest(url: url)
         req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Accept")
-
+        
         do {
             let (data, resp) = try await URLSession.shared.data(for: req)
             if let http = resp as? HTTPURLResponse, http.statusCode != 200 {
@@ -69,8 +67,8 @@ class ViewModel: ObservableObject {
             errorMessage = error.localizedDescription
         }
     }
-
-    func fetchRecentItems(forLibrary libraryId: String, limit: Int = 10) async -> [LibraryItem]? {
+    
+    func fetchItems(forLibrary libraryId: String, limit: Int = 10, sortBy: String, descBy: String) async -> [LibraryItem]? {
         guard !host.isEmpty, !apiKey.isEmpty else {
             errorMessage = "Host/API key missing"
             return nil
@@ -78,7 +76,7 @@ class ViewModel: ObservableObject {
         isLoadingItems = true
         errorMessage = nil
         defer { isLoadingItems = false }
-
+        
         guard var components = URLComponents(string: host) else {
             errorMessage = "Invalid host URL"
             return nil
@@ -86,18 +84,18 @@ class ViewModel: ObservableObject {
         components.path = "/api/libraries/\(libraryId)/items"
         components.queryItems = [
             URLQueryItem(name: "limit", value: "\(limit)"),
-            URLQueryItem(name: "sortBy", value: "updatedAt"),
-            URLQueryItem(name: "sortDesc", value: "true")
+            URLQueryItem(name: "sort", value: sortBy),
+            URLQueryItem(name: "desc", value: descBy)
         ]
         guard let url = components.url else {
             errorMessage = "Bad items URL"
             return nil
         }
-
+        
         var req = URLRequest(url: url)
         req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Accept")
-
+        
         do {
             let (data, resp) = try await URLSession.shared.data(for: req)
             if let http = resp as? HTTPURLResponse, http.statusCode != 200 {
@@ -107,18 +105,18 @@ class ViewModel: ObservableObject {
                 }
                 return nil
             }
-
+            
             if let raw = String(data: data, encoding: .utf8) {
                 print("Raw items response:", raw)
             }
-
+            
             let decoder = JSONDecoder()
             decoder.keyDecodingStrategy = .convertFromSnakeCase
-
+            
             if let wrapper = try? decoder.decode(ResultsWrapper.self, from: data) {
                 return wrapper.results
             }
-
+            
             errorMessage = "Unexpected JSON structure for library items"
             return nil
         } catch {
@@ -127,29 +125,29 @@ class ViewModel: ObservableObject {
             return nil
         }
     }
-
+    
     private var coverCache: [String: Image] = [:]
-
+    
     @MainActor
     func loadCover(for item: LibraryItem) async -> Image? {
         if let cached = coverCache[item.id] {
             return cached
         }
-
+        
         guard var components = URLComponents(string: host) else { return nil }
         components.path = "/audiobookshelf/api/items/\(item.id)/cover"
         guard let url = components.url else { return nil }
-
+        
         var req = URLRequest(url: url)
         req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-
+        
         do {
             let (data, resp) = try await URLSession.shared.data(for: req)
             if let http = resp as? HTTPURLResponse, http.statusCode != 200 {
                 print("Cover fetch failed status:", http.statusCode)
                 return nil
             }
-
+            
             if let ui = UIImage(data: data) {
                 let image = Image(uiImage: ui)
                 coverCache[item.id] = image
@@ -161,3 +159,4 @@ class ViewModel: ObservableObject {
         return nil
     }
 }
+
