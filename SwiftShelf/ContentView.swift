@@ -8,6 +8,19 @@
 import SwiftUI
 
 struct ContentView: View {
+    @AppStorage("recentSearches") private var recentSearchesRaw: String = "[]"
+    @AppStorage("host") private var persistedHost: String = ""
+    @AppStorage("apiKey") private var persistedApiKey: String = "abc123"
+
+    private var recentSearches: [String] {
+        (try? JSONDecoder().decode([String].self, from: Data(recentSearchesRaw.utf8))) ?? []
+    }
+    private func setRecentSearches(_ newValue: [String]) {
+        if let data = try? JSONEncoder().encode(newValue), let str = String(data: data, encoding: .utf8) {
+            recentSearchesRaw = str
+        }
+    }
+
     @EnvironmentObject var vm: ViewModel
     @EnvironmentObject var config: LibraryConfig
     @Environment(\.scenePhase) private var scenePhase
@@ -24,6 +37,8 @@ struct ContentView: View {
 
     @FocusState private var searchFieldIsFocused: Bool
     @FocusState private var focusedResultID: String?
+    
+    @State private var selectedMediaItem: LibraryItem? = nil
 
     var body: some View {
         Group {
@@ -65,6 +80,10 @@ struct ContentView: View {
                 .environmentObject(vm)
                 .environmentObject(config)
         }
+        .sheet(item: $selectedMediaItem) { item in
+            MediaPlayerView(item: item)
+                .environmentObject(vm)
+        }
         .onChange(of: scenePhase) { oldPhase, newPhase in
             if newPhase == .active {
                 Task {
@@ -82,6 +101,7 @@ struct ContentView: View {
             TextField("Search", text: $searchText, onCommit: {
                 Task {
                     await searchBooks()
+                    addRecentSearch(searchText)
                 }
             })
             .focused($searchFieldIsFocused)
@@ -91,6 +111,7 @@ struct ContentView: View {
                     selectedSearchItemID = firstItem.id
                     focusedResultID = firstItem.id
                 }
+                addRecentSearch(searchText)
             }
             .submitLabel(.search)
             .padding(10)
@@ -103,6 +124,22 @@ struct ContentView: View {
                     .stroke(Color.white.opacity(0.6), lineWidth: 2)
             )
             .padding()
+
+            if !recentSearches.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        ForEach(recentSearches, id: \.self) { term in
+                            Button(term) {
+                                searchText = term
+                                addRecentSearch(term)
+                                Task { await searchBooks() }
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                }
+            }
 
             if isSearching {
                 ProgressView()
@@ -120,48 +157,46 @@ struct ContentView: View {
                             Section(header: Text(section.title)) {
                                 ForEach(section.items) { item in
                                     if section.title == "Books", let libItem = item.libraryItem {
-                                        HStack(spacing: 12) {
-                                            if let cachedImage = coverCache[item.id] {
-                                                cachedImage
-                                                    .resizable()
-                                                    .frame(width: 48, height: 48)
-                                                    .cornerRadius(6)
-                                            } else {
-                                                Rectangle()
-                                                    .fill(Color.gray.opacity(0.3))
-                                                    .frame(width: 48, height: 48)
-                                                    .cornerRadius(6)
-                                                    .task {
-                                                        await loadCover(for: libItem)
-                                                    }
-                                            }
-                                            VStack(alignment: .leading, spacing: 4) {
-                                                Text(item.title)
-                                                    .font(.headline)
-                                                if let subtitle = item.subtitle {
-                                                    Text(subtitle)
-                                                        .font(.subheadline)
-                                                        .foregroundColor(.secondary)
+                                        Button {
+                                            selectedMediaItem = libItem
+                                        } label: {
+                                            HStack(spacing: 12) {
+                                                if let cachedImage = coverCache[item.id] {
+                                                    cachedImage
+                                                        .resizable()
+                                                        .frame(width: 48, height: 48)
+                                                        .cornerRadius(6)
+                                                } else {
+                                                    Rectangle()
+                                                        .fill(Color.gray.opacity(0.3))
+                                                        .frame(width: 48, height: 48)
+                                                        .cornerRadius(6)
+                                                        .task {
+                                                            await loadCover(for: libItem)
+                                                        }
                                                 }
+                                                VStack(alignment: .leading, spacing: 4) {
+                                                    Text(item.title)
+                                                        .font(.headline)
+                                                    if let subtitle = item.subtitle {
+                                                        Text(subtitle)
+                                                            .font(.subheadline)
+                                                            .foregroundColor(.secondary)
+                                                    }
+                                                }
+                                                Spacer()
                                             }
-                                            Spacer()
+                                            .padding(.vertical, 4)
+                                            .contentShape(Rectangle())
+                                            .background(selectedSearchItemID == item.id ? Color.accentColor.opacity(0.2) : Color.clear)
                                         }
-                                        .padding(.vertical, 4)
-                                        .contentShape(Rectangle())
-                                        .background(selectedSearchItemID == item.id ? Color.accentColor.opacity(0.2) : Color.clear)
+                                        .buttonStyle(PlainButtonStyle())
                                         .focused($focusedResultID, equals: item.id)
                                         .onAppear {
                                             if selectedSearchItemID == nil && focusedResultID == nil {
                                                 selectedSearchItemID = item.id
                                             }
                                         }
-                                        .onTapGesture {
-                                            selectedSearchItemID = item.id
-                                            focusedResultID = item.id
-                                        }
-                                        .onSubmit {
-                                        }
-                                        .submitLabel(.done)
                                         .accessibilityRespondsToUserInteraction(true)
                                     } else {
                                         VStack(alignment: .leading, spacing: 4) {
@@ -206,8 +241,11 @@ struct ContentView: View {
             Text("SwiftShelf").font(.title2)
             VStack(spacing: 8) {
                 TextField("Host", text: Binding(
-                    get: { vm.host },
-                    set: { vm.host = $0 }
+                    get: { persistedHost },
+                    set: { value in
+                        persistedHost = value
+                        vm.host = value
+                    }
                 ))
                 .padding(10)
                 .background(
@@ -222,8 +260,11 @@ struct ContentView: View {
                 .disableAutocorrection(true)
 
                 SecureField("API Key", text: Binding(
-                    get: { vm.apiKey },
-                    set: { vm.apiKey = $0 }
+                    get: { persistedApiKey },
+                    set: { value in
+                        persistedApiKey = value
+                        vm.apiKey = value
+                    }
                 ))
                 .padding(10)
                 .background(
@@ -234,6 +275,10 @@ struct ContentView: View {
                     RoundedRectangle(cornerRadius: 8)
                         .stroke(Color.white.opacity(0.6), lineWidth: 2)
                 )
+            }
+            .onAppear {
+                if vm.host != persistedHost { vm.host = persistedHost }
+                if vm.apiKey != persistedApiKey { vm.apiKey = persistedApiKey }
             }
 
             Button {
@@ -366,6 +411,14 @@ struct ContentView: View {
         }
     }
 
+    private func addRecentSearch(_ term: String) {
+        let trimmed = term.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        var recents = recentSearches.filter { $0.caseInsensitiveCompare(trimmed) != .orderedSame }
+        recents.insert(trimmed, at: 0)
+        setRecentSearches(Array(recents.prefix(8)))
+    }
+
     // MARK: - Models for search response and display
 
     struct SearchResponse: Decodable {
@@ -410,3 +463,4 @@ struct ContentView: View {
         let libraryItem: LibraryItem?
     }
 }
+

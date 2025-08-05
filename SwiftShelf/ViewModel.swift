@@ -26,12 +26,17 @@ class ViewModel: ObservableObject {
         }
     }
 
-    @Published var host: String = "https://sample.abs.host"
-    @Published var apiKey: String = "your-real-api-key"
+    // Marked host and apiKey as @Published public vars
+    @Published public var host: String = ""
+    @Published public var apiKey: String = ""
+    
     @Published var libraries: [LibrarySummary] = []
     @Published var errorMessage: String?
     @Published var isLoadingLibraries = false
     @Published var isLoadingItems = false
+    
+    // Added computed isLoggedIn property to track login state
+    @Published var isLoggedIn: Bool = false
     
     struct LibrariesWrapper: Codable {
         let libraries: [LibraryResponse]
@@ -39,6 +44,17 @@ class ViewModel: ObservableObject {
     struct LibraryResponse: Codable {
         let id: String
         let name: String
+    }
+    
+    init() {
+        // Initialize isLoggedIn based on current host and apiKey
+        self.isLoggedIn = !host.isEmpty && !apiKey.isEmpty
+        
+        // Observe host and apiKey changes to update isLoggedIn
+        $host
+            .combineLatest($apiKey)
+            .map { !$0.isEmpty && !$1.isEmpty }
+            .assign(to: &$isLoggedIn)
     }
     
     func connect() async {
