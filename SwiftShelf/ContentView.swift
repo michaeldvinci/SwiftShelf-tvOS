@@ -25,6 +25,7 @@ struct ContentView: View {
     @EnvironmentObject var config: LibraryConfig
     @Environment(\.scenePhase) private var scenePhase
     @State private var selectedTabIndex = 0
+    @State private var wasLoggedIn = false
     @State private var showSelection = false
     @State private var dummyRefreshTrigger = 0
 
@@ -104,7 +105,18 @@ struct ContentView: View {
                 }
             }
         }
+        .onChange(of: vm.isLoggedIn) { oldValue, newValue in
+            // If user logs in and there are selected libraries, set tab focus to first library
             if !oldValue && newValue && !config.selected.isEmpty {
+                selectedTabIndex = 0
+            }
+        }
+        .onChange(of: config.selected) { _, newValue in
+            // If logged in and libraries become available, focus first library
+            if vm.isLoggedIn && !newValue.isEmpty {
+                selectedTabIndex = 0
+            }
+        }
     }
 
     private var searchTabView: some View {
