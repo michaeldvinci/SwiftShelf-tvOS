@@ -3,8 +3,12 @@ import Combine
 
 struct SettingsView: View {
     @EnvironmentObject var vm: ViewModel
+    @EnvironmentObject var config: LibraryConfig
     @AppStorage("libraryItemLimit") var libraryItemLimit: Int = 10
     @State private var draftLimit: Int
+    @State private var showLoginSheet = false
+    @State private var loginHost: String = ""
+    @State private var loginApiKey: String = ""
 
     init() {
         _draftLimit = State(initialValue: UserDefaults.standard.integer(forKey: "libraryItemLimit") == 0 ? 10 : UserDefaults.standard.integer(forKey: "libraryItemLimit"))
@@ -51,11 +55,32 @@ struct SettingsView: View {
                     }
                 }
                 
-                Section(header: Text("Danger Zone")) {
+                Section(header: Text("User Account")) {
                     Button(role: .destructive) {
-                        // TODO: Implement remove action
+                        loginHost = vm.host
+                        loginApiKey = vm.apiKey
+                        showLoginSheet = true
                     } label: {
-                        Text("Remove")
+                        Text("Login")
+                    }
+                    .sheet(isPresented: $showLoginSheet) {
+                        LoginSheetView(host: $loginHost, apiKey: $loginApiKey)
+                    }
+                    
+                    Button(role: .destructive) {
+                        // Logout action
+                        UserDefaults.standard.set("", forKey: "host")
+                        UserDefaults.standard.set("", forKey: "apiKey")
+                        vm.host = ""
+                        vm.apiKey = ""
+                        vm.libraries = []
+                        vm.errorMessage = nil
+                        vm.isLoggedIn = false
+                        vm.refreshToken += 1
+                        config.selected = []
+                        UserDefaults.standard.set("[]", forKey: "recentSearches")
+                    } label: {
+                        Text("Logout")
                     }
                 }
             }
@@ -68,5 +93,6 @@ struct SettingsView_Previews: PreviewProvider {
     static var previews: some View {
         SettingsView()
             .environmentObject(ViewModel())
+            .environmentObject(LibraryConfig())
     }
 }

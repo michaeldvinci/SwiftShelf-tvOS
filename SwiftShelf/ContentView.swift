@@ -10,7 +10,7 @@ import SwiftUI
 struct ContentView: View {
     @AppStorage("recentSearches") private var recentSearchesRaw: String = "[]"
     @AppStorage("host") private var persistedHost: String = ""
-    @AppStorage("apiKey") private var persistedApiKey: String = "abc123"
+    @AppStorage("apiKey") private var persistedApiKey: String = ""
 
     private var recentSearches: [String] {
         (try? JSONDecoder().decode([String].self, from: Data(recentSearchesRaw.utf8))) ?? []
