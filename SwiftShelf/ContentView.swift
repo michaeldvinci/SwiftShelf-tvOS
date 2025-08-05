@@ -104,6 +104,7 @@ struct ContentView: View {
                 }
             }
         }
+            if !oldValue && newValue && !config.selected.isEmpty {
     }
 
     private var searchTabView: some View {
