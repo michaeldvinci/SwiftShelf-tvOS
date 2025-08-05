@@ -152,7 +152,11 @@ struct LibraryDetailView: View {
 
     private func loadItems() async {
         if isLoadingItems || isLoadingUnfinished { return }
-
+        guard !vm.host.isEmpty, !vm.apiKey.isEmpty else {
+            items = []
+            unfinished = []
+            return
+        }
         let lib = library
 
         isLoadingItems = true

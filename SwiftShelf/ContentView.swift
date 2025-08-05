@@ -94,6 +94,16 @@ struct ContentView: View {
                 }
             }
         }
+        .onAppear {
+            print("[DEBUG] persistedHost: \(persistedHost), persistedApiKey: \(persistedApiKey), config.selected: \(config.selected.count)")
+            if !persistedHost.isEmpty && !persistedApiKey.isEmpty {
+                if vm.host.isEmpty { vm.host = persistedHost }
+                if vm.apiKey.isEmpty { vm.apiKey = persistedApiKey }
+                if !config.selected.isEmpty {
+                    Task { await vm.connect() }
+                }
+            }
+        }
     }
 
     private var searchTabView: some View {
@@ -280,7 +290,7 @@ struct ContentView: View {
                 if vm.host != persistedHost { vm.host = persistedHost }
                 if vm.apiKey != persistedApiKey { vm.apiKey = persistedApiKey }
             }
-
+            
             Button {
                 Task {
                     await vm.connect()
