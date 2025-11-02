@@ -11,29 +11,12 @@ import Combine
 struct CompactPlayerView: View {
     @EnvironmentObject var audioManager: GlobalAudioManager
     @EnvironmentObject var viewModel: ViewModel
-    @State private var showFullPlayer = false
     @State private var localRate: Float = 1.0
     @State private var cancellable: AnyCancellable?
     
     var body: some View {
         if let currentItem = audioManager.currentItem {
             VStack(spacing: 0) {
-                // Progress bar
-                GeometryReader { geometry in
-                    let progress = audioManager.duration > 0 ? audioManager.currentTime / audioManager.duration : 0
-                    
-                    ZStack(alignment: .leading) {
-                        Rectangle()
-                            .fill(Color.gray.opacity(0.3))
-                            .frame(height: 3)
-                        
-                        Rectangle()
-                            .fill(Color.accentColor)
-                            .frame(width: geometry.size.width * CGFloat(progress), height: 3)
-                    }
-                }
-                .frame(height: 3)
-                
                 // Player controls
                 HStack(spacing: 12) {
                     // Artwork
@@ -82,27 +65,44 @@ struct CompactPlayerView: View {
                     
                     Spacer()
                     
-                    // Play/Pause button replaced with full player open button
+                    // Show transport controls instead of opening full player
                     if audioManager.hasAudioStream {
-                        Button(action: {
-                            // Open the full player (chapter list can be added here later)
-                            showFullPlayer = true
-                        }) {
-                            Image(systemName: "list.bullet")
-                                .font(.system(size: 22, weight: .bold))
-                                .foregroundColor(.primary)
-                                .frame(width: 32, height: 32)
-                                .contentShape(Rectangle())
+                        // Time display
+                        VStack(spacing: 2) {
+                            Text(formatTime(audioManager.currentTime))
+                                .font(.caption2)
+                                .monospacedDigit()
+                                .foregroundColor(.secondary)
+                            Text(formatTime(audioManager.duration))
+                                .font(.caption2)
+                                .monospacedDigit()
+//                                .foregroundColor(.tertiary)
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Open chapters")
                     } else {
                         // Show loading indicator while preparing
                         ProgressView()
                             .scaleEffect(0.8)
                     }
                 }
-                
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+
+                // Progress bar
+                GeometryReader { geometry in
+                    let progress = audioManager.duration > 0 ? audioManager.currentTime / audioManager.duration : 0
+
+                    ZStack(alignment: .leading) {
+                        Rectangle()
+                            .fill(Color.gray.opacity(0.5))
+                            .frame(height: 3)
+
+                        Rectangle()
+                            .fill(Color.accentColor)
+                            .frame(width: geometry.size.width * CGFloat(progress), height: 3)
+                    }
+                }
+                .frame(height: 3)
+
                 // Transport controls
                 HStack(spacing: 16) {
                     // Previous Chapter
@@ -174,16 +174,25 @@ struct CompactPlayerView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
-                .background(.ultraThinMaterial)
             }
+            .background(Color.black.opacity(0.3))
             .onAppear {
                 localRate = audioManager.rate
             }
-            .sheet(isPresented: $showFullPlayer) {
-                MediaPlayerView(item: currentItem)
-                    .environmentObject(viewModel)
-                    .environmentObject(audioManager)
-            }
+        }
+    }
+    
+    private func formatTime(_ seconds: Double) -> String {
+        guard seconds.isFinite && seconds >= 0 else { return "0:00" }
+        let totalSeconds = Int(seconds.rounded())
+        let hours = totalSeconds / 3600
+        let minutes = (totalSeconds % 3600) / 60
+        let secs = totalSeconds % 60
+        
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, secs)
+        } else {
+            return String(format: "%d:%02d", minutes, secs)
         }
     }
 }

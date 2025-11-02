@@ -144,11 +144,6 @@ class ViewModel: ObservableObject {
             let wrapper = try decoder.decode(LibrariesWrapper.self, from: data)
             self.libraries = wrapper.libraries.map { LibrarySummary(id: $0.id, name: $0.name) }
             print("[ViewModel] Successfully loaded \(self.libraries.count) libraries")
-            
-            // Auto-test streaming endpoints when libraries are loaded successfully
-            Task {
-                await self.testStreamingEndpoints()
-            }
         } catch {
             APILogger.logError(error, description: "Fetch Libraries")
             errorMessage = error.localizedDescription
@@ -261,7 +256,11 @@ class ViewModel: ObservableObject {
         refreshToken += 1
     }
 
-    // Test streaming endpoints immediately after library loading for debugging
+    // MARK: - Experimental streaming endpoint testing (disabled by default)
+    // These methods are kept for manual debugging but not called automatically
+    // to avoid 404 spam in logs. The working streaming approach is in streamURL(for:in:)
+
+    #if DEBUG
     private func testStreamingEndpoints() async {
         guard !libraries.isEmpty else { return }
         
@@ -532,7 +531,8 @@ class ViewModel: ObservableObject {
         print("[ViewModel] Completed streaming endpoint tests for item: \(item.title)")
         await logToFile("Completed streaming endpoint tests for item: \(item.title)")
     }
-    
+    #endif
+
 }
 
 
@@ -676,13 +676,123 @@ extension ViewModel {
         return nil
     }
     
-    // Persist progress for this item (dummy async implementation)
+    /// Save progress for a library item to the server
+    /// - Parameters:
+    ///   - item: The library item
+    ///   - seconds: Current playback position in seconds
     func saveProgress(for item: LibraryItem, seconds: Double) async {
-        // TODO: Implement persistence (e.g. to server or UserDefaults)
+        guard !host.isEmpty, !apiKey.isEmpty else {
+            print("[ViewModel] Cannot save progress: missing host or API key")
+            return
+        }
+
+        guard let duration = item.duration else {
+            print("[ViewModel] Cannot save progress: missing duration for item \(item.id)")
+            return
+        }
+
+        guard var components = URLComponents(string: host) else {
+            print("[ViewModel] Invalid host URL: \(host)")
+            return
+        }
+
+        components.path = "/api/me/progress"
+
+        guard let url = components.url else {
+            print("[ViewModel] Failed to construct progress URL")
+            return
+        }
+
+        let progress = min(1.0, max(0.0, seconds / duration))
+
+        let payload: [String: Any] = [
+            "libraryItemId": item.id,
+            "duration": duration,
+            "progress": progress,
+            "currentTime": seconds,
+            "isFinished": progress >= 0.99
+        ]
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "PATCH"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+
+            APILogger.logRequest(request, description: "Save Progress")
+
+            let (data, response) = try await URLSession.shared.data(for: request)
+
+            APILogger.logResponse(data, response, description: "Save Progress")
+
+            if let httpResponse = response as? HTTPURLResponse {
+                if httpResponse.statusCode == 200 {
+                    print("[ViewModel] ✅ Progress saved: \(seconds)s / \(duration)s (\(Int(progress * 100))%)")
+                } else {
+                    print("[ViewModel] ❌ Save progress failed with status \(httpResponse.statusCode)")
+                }
+            }
+        } catch {
+            APILogger.logError(error, description: "Save Progress")
+            print("[ViewModel] Error saving progress: \(error.localizedDescription)")
+        }
     }
-    // Load last position for this item (dummy async implementation)
+
+    /// Load progress for a library item from the server
+    /// - Parameter item: The library item
+    /// - Returns: Current playback position in seconds, or nil if not found
     func loadProgress(for item: LibraryItem) async -> Double? {
-        // TODO: Implement retrieval (e.g. from server or UserDefaults)
+        guard !host.isEmpty, !apiKey.isEmpty else {
+            print("[ViewModel] Cannot load progress: missing host or API key")
+            return nil
+        }
+
+        guard var components = URLComponents(string: host) else {
+            print("[ViewModel] Invalid host URL: \(host)")
+            return nil
+        }
+
+        components.path = "/api/me/progress/\(item.id)"
+
+        guard let url = components.url else {
+            print("[ViewModel] Failed to construct progress URL")
+            return nil
+        }
+
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        do {
+            APILogger.logRequest(request, description: "Load Progress")
+
+            let (data, response) = try await URLSession.shared.data(for: request)
+
+            APILogger.logResponse(data, response, description: "Load Progress")
+
+            if let httpResponse = response as? HTTPURLResponse {
+                if httpResponse.statusCode == 200 {
+                    let decoder = JSONDecoder()
+                    let progressData = try decoder.decode(UserMediaProgress.self, from: data)
+
+                    let currentTime = progressData.currentTime ?? 0
+                    print("[ViewModel] ✅ Progress loaded for \(item.title): \(currentTime)s (progress: \(progressData.progress ?? 0))")
+                    return currentTime
+                } else if httpResponse.statusCode == 404 {
+                    print("[ViewModel] No progress found for item \(item.id)")
+                    return nil
+                } else {
+                    print("[ViewModel] ❌ Load progress failed with status \(httpResponse.statusCode)")
+                    return nil
+                }
+            }
+        } catch {
+            APILogger.logError(error, description: "Load Progress")
+            print("[ViewModel] Error loading progress: \(error.localizedDescription)")
+        }
+
         return nil
     }
 }

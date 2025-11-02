@@ -9,6 +9,11 @@ import SwiftUI
 import AVFoundation
 import Combine
 
+// Import ProgressBarColor enum from SettingsView
+extension ProgressBarColor {
+    // Shared with SettingsView
+}
+
 struct LibraryItemDetailPopup: View {
     let item: LibraryItem
     let cover: (Image, UIImage)?
@@ -64,10 +69,11 @@ struct LibraryDetailView: View {
     @State private var isLoadingItems = false
     @State private var isLoadingUnfinished = false
     @State private var coverImages: [String: (Image, UIImage)] = [:]
+    @State private var progressPercent: [String: Double] = [:] // 0.0...1.0
+    @State private var hasLoadedOnce = false
 
     // Restore state variables to manage in-app media player presentation
     @State private var selectedItem: LibraryItem? = nil
-    @State private var showItemPopup = false
 
     private let thumbSize: CGFloat = 225
 
@@ -96,13 +102,13 @@ struct LibraryDetailView: View {
                             LibraryCarouselView(
                                 items: items,
                                 coverImages: $coverImages,
+                                progressPercent: $progressPercent,
                                 loadCover: { await vm.loadCover(for: $0) },
                                 thumbSize: thumbSize,
                                 onSelect: { item in
                                     print("[LibraryCarouselView] 🎯 Recent item selected: \(item.title)")
-                                    // Always show in-app media player for selected item regardless of audio presence
+                                    // Set selectedItem to trigger sheet presentation
                                     selectedItem = item
-                                    showItemPopup = true
                                 }
                             )
                             .environmentObject(vm)
@@ -125,13 +131,13 @@ struct LibraryDetailView: View {
                             LibraryCarouselView(
                                 items: unfinished,
                                 coverImages: $coverImages,
+                                progressPercent: $progressPercent,
                                 loadCover: { await vm.loadCover(for: $0) },
                                 thumbSize: thumbSize,
                                 onSelect: { item in
                                     print("[LibraryCarouselView] 🎯 Continue item selected: \(item.title)")
-                                    // Always show in-app media player for selected item regardless of audio presence
+                                    // Set selectedItem to trigger sheet presentation
                                     selectedItem = item
-                                    showItemPopup = true
                                 }
                             )
                             .environmentObject(vm)
@@ -145,19 +151,21 @@ struct LibraryDetailView: View {
             Spacer()
         }
         .navigationTitle("")
-        .fullScreenCover(isPresented: $showItemPopup, onDismiss: {
+        .sheet(item: $selectedItem, onDismiss: {
             selectedItem = nil
-        }) {
-            if let selectedItem = selectedItem {
-                // Present unified MediaPlayerView on all platforms, matching AVPlayerViewController style
-                MediaPlayerView(item: selectedItem)
-                    .environmentObject(vm)
-                    .environmentObject(audioManager)
-            }
+        }) { item in
+            // Present unified BookDetailsPopupView with Apple-style blurred background
+            BookDetailsPopupView(item: item)
+                .environmentObject(vm)
+                .environmentObject(audioManager)
         }
         .onAppear {
-            print("[LibraryDetailView] 👀 LibraryDetailView appeared for library: \(library.name)")
-            Task { await loadItems() }
+            // Only load once on first appearance
+            if !hasLoadedOnce {
+                print("[LibraryDetailView] 👀 LibraryDetailView initial load for library: \(library.name)")
+                hasLoadedOnce = true
+                Task { await loadItems() }
+            }
         }
         .onChange(of: vm.refreshToken) { _, _ in
             Task { await loadItems() }
@@ -190,6 +198,40 @@ struct LibraryDetailView: View {
                     }
                 }
             }
+            await withTaskGroup(of: (String, Double?, Double?).self) { group in
+                for item in fetched {
+                    group.addTask {
+                        let last = await vm.loadProgress(for: item)
+                        let fallback = item.userMediaProgress?.progress
+                        return (item.id, last, fallback)
+                    }
+                }
+                for await (id, last, fallback) in group {
+                    if let it = fetched.first(where: { $0.id == id }) {
+                        let dur = it.duration
+                        // Fallback is already a percentage (0-1), last is seconds
+                        let lastSeconds: Double?
+                        if let last = last {
+                            lastSeconds = last
+                        } else if let fallback = fallback, let dur = dur, dur > 0 {
+                            // Convert percentage to seconds
+                            lastSeconds = fallback * dur
+                        } else {
+                            lastSeconds = nil
+                        }
+
+                        print("[ProgressDebug] Recent: \"\(it.title)\" (id=\(id)) last=\(String(describing: last)) fallback=\(String(describing: fallback)) duration=\(String(describing: dur))")
+                        if let d = dur, d > 0, let ls = lastSeconds {
+                            let pct = max(0.0, min(1.0, ls / d))
+                            progressPercent[id] = pct
+                            print("[ProgressDebug] -> percent=\(Int(round(pct * 100)))%")
+                        } else {
+                            progressPercent[id] = 0
+                            print("[ProgressDebug] -> percent=0% (missing last or duration)")
+                        }
+                    }
+                }
+            }
         } else {
             items = []
         }
@@ -210,6 +252,40 @@ struct LibraryDetailView: View {
                     }
                 }
             }
+            await withTaskGroup(of: (String, Double?, Double?).self) { group in
+                for item in fetchedUnfinished {
+                    group.addTask {
+                        let last = await vm.loadProgress(for: item)
+                        let fallback = item.userMediaProgress?.progress
+                        return (item.id, last, fallback)
+                    }
+                }
+                for await (id, last, fallback) in group {
+                    if let it = fetchedUnfinished.first(where: { $0.id == id }) {
+                        let dur = it.duration
+                        // Fallback is already a percentage (0-1), last is seconds
+                        let lastSeconds: Double?
+                        if let last = last {
+                            lastSeconds = last
+                        } else if let fallback = fallback, let dur = dur, dur > 0 {
+                            // Convert percentage to seconds
+                            lastSeconds = fallback * dur
+                        } else {
+                            lastSeconds = nil
+                        }
+
+                        print("[ProgressDebug] Continue: \"\(it.title)\" (id=\(id)) last=\(String(describing: last)) fallback=\(String(describing: fallback)) duration=\(String(describing: dur))")
+                        if let d = dur, d > 0, let ls = lastSeconds {
+                            let pct = max(0.0, min(1.0, ls / d))
+                            progressPercent[id] = pct
+                            print("[ProgressDebug] -> percent=\(Int(round(pct * 100)))%")
+                        } else {
+                            progressPercent[id] = 0
+                            print("[ProgressDebug] -> percent=0% (missing last or duration)")
+                        }
+                    }
+                }
+            }
         } else {
             unfinished = []
         }
@@ -220,6 +296,7 @@ struct LibraryDetailView: View {
         @EnvironmentObject var vm: ViewModel
         let items: [LibraryItem]
         @Binding var coverImages: [String: (Image, UIImage)]
+        @Binding var progressPercent: [String: Double]
         var loadCover: (LibraryItem) async -> (Image, UIImage)?
         let thumbSize: CGFloat
         let onSelect: (LibraryItem) -> Void
@@ -233,6 +310,7 @@ struct LibraryDetailView: View {
                         CarouselItemView(
                             item: item,
                             cover: coverImages[item.id],
+                            progress: progressPercent[item.id] ?? 0,
                             loadCover: {
                                 if let imageTuple = await loadCover(item) {
                                     coverImages[item.id] = imageTuple
@@ -254,11 +332,17 @@ struct LibraryDetailView: View {
     struct CarouselItemView: View {
         let item: LibraryItem
         var cover: (Image, UIImage)?
+        let progress: Double // 0.0...1.0
         let loadCover: () async -> Void
         let thumbSize: CGFloat
         let onSelect: () -> Void
 
         @State private var isFocused: Bool = false
+        @AppStorage("progressBarColor") var progressBarColorString: String = "Yellow"
+
+        var progressBarColor: ProgressBarColor {
+            ProgressBarColor(rawValue: progressBarColorString) ?? .yellow
+        }
 
         var body: some View {
             Button {
@@ -280,6 +364,38 @@ struct LibraryDetailView: View {
                                 }
                         }
                     }
+                    .overlay(
+                        VStack(spacing: 0) {
+                            Spacer()
+                            // Progress bar
+                            GeometryReader { geo in
+                                let width = geo.size.width
+                                let barHeight: CGFloat = 6
+                                let progressWidth = max(0, min(width * progress, width))
+
+                                ZStack(alignment: .leading) {
+                                    // Background
+                                    Capsule().fill(Color.white.opacity(0.15)).frame(width: width, height: barHeight)
+
+                                    // Progress fill
+                                    if progressBarColor == .rainbow {
+                                        LinearGradient(
+                                            colors: [.red, .orange, .yellow, .green, .blue, .purple],
+                                            startPoint: .leading,
+                                            endPoint: .trailing
+                                        )
+                                        .frame(width: progressWidth, height: barHeight)
+                                        .clipShape(Capsule())
+                                    } else {
+                                        Capsule()
+                                            .fill(progressBarColor.color)
+                                            .frame(width: progressWidth, height: barHeight)
+                                    }
+                                }
+                            }
+                            .frame(height: 6)
+                        }
+                    )
                     .overlay(
                         RoundedRectangle(cornerRadius: 8)
                             .stroke(isFocused ? Color.white.opacity(0.8) : Color.clear, lineWidth: 3)

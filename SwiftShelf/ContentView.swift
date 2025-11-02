@@ -75,6 +75,21 @@ struct ContentView: View {
                                 .tag(idx)
                         }
 
+                        // Refresh button as a tab item (appears before settings)
+                        Text("")
+                            .tabItem {
+                                Label {
+                                    Text("")
+                                } icon: {
+                                    Button {
+                                        vm.refreshToken += 1
+                                    } label: {
+                                        Image(systemName: "arrow.clockwise")
+                                    }
+                                }
+                            }
+                            .tag(-999)
+
                         SettingsView()
                             .environmentObject(vm)
                             .environmentObject(config)
@@ -102,14 +117,14 @@ struct ContentView: View {
                 .environmentObject(config)
         }
         .sheet(item: $selectedMediaItem) { item in
-            // Use MediaPlayerView for proper tvOS integration with artwork
-            MediaPlayerView(item: item)
+            // Use BookDetailsPopupView for tvOS integration with blurred popup
+            BookDetailsPopupView(item: item)
                 .environmentObject(vm)
                 .environmentObject(audioManager)
         }
         // Unify playback UI for search and library selections:
         .sheet(item: $selectedMediaItemForPlayback) { item in
-            MediaPlayerView(item: item)
+            BookDetailsPopupView(item: item)
                 .environmentObject(vm)
                 .environmentObject(audioManager)
         }
@@ -346,6 +361,22 @@ struct ContentView: View {
                 )
             }
             .onAppear {
+                #if DEBUG
+                // Pre-populate with config values for debug builds
+                if let configURL = Bundle.main.url(forResource: ".swiftshelf-config", withExtension: "json"),
+                   let data = try? Data(contentsOf: configURL),
+                   let config = try? JSONDecoder().decode(DevConfig.self, from: data) {
+                    if persistedHost.isEmpty {
+                        persistedHost = config.host
+                        vm.host = config.host
+                    }
+                    if persistedApiKey.isEmpty {
+                        persistedApiKey = config.apiKey
+                        vm.apiKey = config.apiKey
+                    }
+                }
+                #endif
+
                 if vm.host != persistedHost { vm.host = persistedHost }
                 if vm.apiKey != persistedApiKey { vm.apiKey = persistedApiKey }
             }
@@ -548,6 +579,13 @@ struct ContentView: View {
         let subtitle: String?
         let libraryItem: LibraryItem?
     }
+
+    #if DEBUG
+    private struct DevConfig: Codable {
+        let host: String
+        let apiKey: String
+    }
+    #endif
 }
 
 // YouTubePlayerView moved to separate file YouTubePlayerView.swift
