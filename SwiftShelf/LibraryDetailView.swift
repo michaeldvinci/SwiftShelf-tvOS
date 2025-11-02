@@ -106,8 +106,6 @@ struct LibraryDetailView: View {
                                 loadCover: { await vm.loadCover(for: $0) },
                                 thumbSize: thumbSize,
                                 onSelect: { item in
-                                    print("[LibraryCarouselView] 🎯 Recent item selected: \(item.title)")
-                                    // Set selectedItem to trigger sheet presentation
                                     selectedItem = item
                                 }
                             )
@@ -135,8 +133,6 @@ struct LibraryDetailView: View {
                                 loadCover: { await vm.loadCover(for: $0) },
                                 thumbSize: thumbSize,
                                 onSelect: { item in
-                                    print("[LibraryCarouselView] 🎯 Continue item selected: \(item.title)")
-                                    // Set selectedItem to trigger sheet presentation
                                     selectedItem = item
                                 }
                             )
@@ -160,9 +156,7 @@ struct LibraryDetailView: View {
                 .environmentObject(audioManager)
         }
         .onAppear {
-            // Only load once on first appearance
             if !hasLoadedOnce {
-                print("[LibraryDetailView] 👀 LibraryDetailView initial load for library: \(library.name)")
                 hasLoadedOnce = true
                 Task { await loadItems() }
             }
@@ -220,14 +214,14 @@ struct LibraryDetailView: View {
                             lastSeconds = nil
                         }
 
-                        print("[ProgressDebug] Recent: \"\(it.title)\" (id=\(id)) last=\(String(describing: last)) fallback=\(String(describing: fallback)) duration=\(String(describing: dur))")
+                        #if DEBUG
+                        print("[Progress] Recent: \"\(it.title)\" last=\(String(describing: last)) fallback=\(String(describing: fallback)) dur=\(String(describing: dur))")
+                        #endif
                         if let d = dur, d > 0, let ls = lastSeconds {
                             let pct = max(0.0, min(1.0, ls / d))
                             progressPercent[id] = pct
-                            print("[ProgressDebug] -> percent=\(Int(round(pct * 100)))%")
                         } else {
                             progressPercent[id] = 0
-                            print("[ProgressDebug] -> percent=0% (missing last or duration)")
                         }
                     }
                 }
@@ -274,14 +268,14 @@ struct LibraryDetailView: View {
                             lastSeconds = nil
                         }
 
-                        print("[ProgressDebug] Continue: \"\(it.title)\" (id=\(id)) last=\(String(describing: last)) fallback=\(String(describing: fallback)) duration=\(String(describing: dur))")
+                        #if DEBUG
+                        print("[Progress] Continue: \"\(it.title)\" last=\(String(describing: last)) fallback=\(String(describing: fallback)) dur=\(String(describing: dur))")
+                        #endif
                         if let d = dur, d > 0, let ls = lastSeconds {
                             let pct = max(0.0, min(1.0, ls / d))
                             progressPercent[id] = pct
-                            print("[ProgressDebug] -> percent=\(Int(round(pct * 100)))%")
                         } else {
                             progressPercent[id] = 0
-                            print("[ProgressDebug] -> percent=0% (missing last or duration)")
                         }
                     }
                 }
@@ -346,7 +340,6 @@ struct LibraryDetailView: View {
 
         var body: some View {
             Button {
-                print("[CarouselItemView] Item selected: \(item.title)")
                 onSelect()
             } label: {
                 VStack(alignment: .leading, spacing: 8) {

@@ -1,10 +1,12 @@
 import SwiftUI
 
 struct LoginSheetView: View {
-    @Binding var host: String
-    @Binding var apiKey: String
+    @EnvironmentObject var viewModel: ViewModel
     @Environment(\.dismiss) private var dismiss
-    
+
+    @State private var host: String = ""
+    @State private var apiKey: String = ""
+
     var body: some View {
         NavigationView {
             Form {
@@ -16,6 +18,7 @@ struct LoginSheetView: View {
                 }
                 Section {
                     Button("Done") {
+                        viewModel.saveCredentialsToKeychain(host: host, apiKey: apiKey)
                         dismiss()
                     }
                     .disabled(host.isEmpty || apiKey.isEmpty)
@@ -29,12 +32,16 @@ struct LoginSheetView: View {
                     }
                 }
             }
+            .onAppear {
+                // Pre-fill with current values
+                host = viewModel.host
+                apiKey = viewModel.apiKey
+            }
         }
     }
 }
 
 #Preview {
-    @Previewable @State var h: String = "demo"
-    @Previewable @State var k: String = "secret"
-    return LoginSheetView(host: $h, apiKey: $k)
+    LoginSheetView()
+        .environmentObject(ViewModel())
 }

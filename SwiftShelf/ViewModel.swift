@@ -12,13 +12,18 @@ import Combine
 // MARK: - API Logging Utility
 class APILogger {
     static func logRequest(_ request: URLRequest, description: String) {
+        #if DEBUG
         print("\n=== [API REQUEST] \(description) ===")
-        print("URL: \(request.url?.absoluteString ?? "nil")")
+        if let url = request.url?.absoluteString {
+            // Redact token from URL
+            let redacted = url.replacingOccurrences(of: #"token=[^&]+"#, with: "token=[REDACTED]", options: .regularExpression)
+            print("URL: \(redacted)")
+        }
         print("Method: \(request.httpMethod ?? "GET")")
         if let headers = request.allHTTPHeaderFields {
             print("Headers:")
             for (key, value) in headers {
-                let maskedValue = key.lowercased().contains("auth") ? "[MASKED]" : value
+                let maskedValue = key.lowercased().contains("auth") ? "[REDACTED]" : value
                 print("  \(key): \(maskedValue)")
             }
         }
@@ -26,37 +31,28 @@ class APILogger {
             print("Body: \(bodyString)")
         }
         print("========================\n")
+        #endif
     }
-    
+
     static func logResponse(_ data: Data?, _ response: URLResponse?, description: String) {
+        #if DEBUG
         print("\n=== [API RESPONSE] \(description) ===")
         if let httpResponse = response as? HTTPURLResponse {
             print("Status Code: \(httpResponse.statusCode)")
-            print("Headers:")
-            for (key, value) in httpResponse.allHeaderFields {
-                print("  \(key): \(value)")
-            }
         }
         if let data = data {
             print("Data Size: \(data.count) bytes")
-            if let responseString = String(data: data, encoding: .utf8) {
-                let preview = responseString.count > 1000 ? String(responseString.prefix(1000)) + "..." : responseString
-                print("Response Body: \(preview)")
-            }
         }
         print("========================\n")
+        #endif
     }
-    
+
     static func logError(_ error: Error, description: String) {
+        #if DEBUG
         print("\n=== [API ERROR] \(description) ===")
-        print("Error: \(error)")
-        print("Localized Description: \(error.localizedDescription)")
-        if let nsError = error as NSError? {
-            print("Domain: \(nsError.domain)")
-            print("Code: \(nsError.code)")
-            print("User Info: \(nsError.userInfo)")
-        }
+        print("Error: \(error.localizedDescription)")
         print("========================\n")
+        #endif
     }
 }
 
@@ -77,18 +73,18 @@ class ViewModel: ObservableObject {
         }
     }
 
-    // Use @AppStorage to persist credentials
-    @AppStorage("host") public var host: String = ""
-    @AppStorage("apiKey") public var apiKey: String = ""
-    
+    // Credentials stored in Keychain (in-memory cache)
+    @Published public var host: String = ""
+    @Published public var apiKey: String = ""
+
     @Published var libraries: [LibrarySummary] = []
     @Published var errorMessage: String?
     @Published var isLoadingLibraries = false
     @Published var isLoadingItems = false
-    
+
     // Added computed isLoggedIn property to track login state
     @Published var isLoggedIn: Bool = false
-    
+
     struct LibrariesWrapper: Codable {
         let libraries: [LibraryResponse]
     }
@@ -96,10 +92,96 @@ class ViewModel: ObservableObject {
         let id: String
         let name: String
     }
-    
+
     init() {
+        // Migrate from UserDefaults to Keychain if needed
+        migrateCredentialsToKeychain()
+        // Load credentials from Keychain
+        loadCredentialsFromKeychain()
         // Initialize isLoggedIn based on current host and apiKey
         updateLoginState()
+    }
+
+    private func migrateCredentialsToKeychain() {
+        let defaults = UserDefaults.standard
+
+        // Migrate host if it exists in UserDefaults
+        if let hostValue = defaults.string(forKey: "host"), !hostValue.isEmpty {
+            do {
+                try KeychainService.set(hostValue, forKey: "host")
+                defaults.removeObject(forKey: "host")
+                #if DEBUG
+                print("[ViewModel] Migrated host to Keychain")
+                #endif
+            } catch {
+                #if DEBUG
+                print("[ViewModel] Failed to migrate host: \(error)")
+                #endif
+            }
+        }
+
+        // Migrate apiKey if it exists in UserDefaults
+        if let apiKeyValue = defaults.string(forKey: "apiKey"), !apiKeyValue.isEmpty {
+            do {
+                try KeychainService.set(apiKeyValue, forKey: "apiKey")
+                defaults.removeObject(forKey: "apiKey")
+                #if DEBUG
+                print("[ViewModel] Migrated apiKey to Keychain")
+                #endif
+            } catch {
+                #if DEBUG
+                print("[ViewModel] Failed to migrate apiKey: \(error)")
+                #endif
+            }
+        }
+    }
+
+    private func loadCredentialsFromKeychain() {
+        // Load host
+        if let hostValue = try? KeychainService.get(forKey: "host") {
+            self.host = hostValue
+        }
+
+        // Load apiKey
+        if let apiKeyValue = try? KeychainService.get(forKey: "apiKey") {
+            self.apiKey = apiKeyValue
+        }
+    }
+
+    func saveCredentialsToKeychain(host: String, apiKey: String) {
+        do {
+            try KeychainService.set(host, forKey: "host")
+            try KeychainService.set(apiKey, forKey: "apiKey")
+            self.host = host
+            self.apiKey = apiKey
+            updateLoginState()
+            #if DEBUG
+            print("[ViewModel] Credentials saved to Keychain")
+            #endif
+        } catch {
+            #if DEBUG
+            print("[ViewModel] Failed to save credentials: \(error)")
+            #endif
+            errorMessage = "Failed to save credentials securely"
+        }
+    }
+
+    func logout() {
+        do {
+            try KeychainService.delete(forKey: "host")
+            try KeychainService.delete(forKey: "apiKey")
+            self.host = ""
+            self.apiKey = ""
+            self.libraries = []
+            updateLoginState()
+            #if DEBUG
+            print("[ViewModel] Logged out and cleared credentials")
+            #endif
+        } catch {
+            #if DEBUG
+            print("[ViewModel] Failed to clear credentials: \(error)")
+            #endif
+        }
     }
 
     private func updateLoginState() {
@@ -143,7 +225,6 @@ class ViewModel: ObservableObject {
             decoder.keyDecodingStrategy = .convertFromSnakeCase
             let wrapper = try decoder.decode(LibrariesWrapper.self, from: data)
             self.libraries = wrapper.libraries.map { LibrarySummary(id: $0.id, name: $0.name) }
-            print("[ViewModel] Successfully loaded \(self.libraries.count) libraries")
         } catch {
             APILogger.logError(error, description: "Fetch Libraries")
             errorMessage = error.localizedDescription
@@ -202,7 +283,6 @@ class ViewModel: ObservableObject {
             decoder.keyDecodingStrategy = .convertFromSnakeCase
             
             if let wrapper = try? decoder.decode(ResultsWrapper.self, from: data) {
-                print("[ViewModel] Successfully loaded \(wrapper.results.count) library items")
                 return wrapper.results
             }
             
@@ -233,17 +313,18 @@ class ViewModel: ObservableObject {
         do {
             let (data, resp) = try await URLSession.shared.data(for: req)
             if let http = resp as? HTTPURLResponse, http.statusCode != 200 {
-                print("Cover fetch failed status:", http.statusCode)
                 return nil
             }
-            
+
             if let ui = UIImage(data: data) {
                 let image = Image(uiImage: ui)
                 coverCache[item.id] = (image, ui)
                 return (image, ui)
             }
         } catch {
-            print("Cover load error:", error)
+            #if DEBUG
+            print("[ViewModel] Cover load error: \(error.localizedDescription)")
+            #endif
         }
         return nil
     }
@@ -255,284 +336,6 @@ class ViewModel: ObservableObject {
     private func onLibraryItemLimitChanged() async {
         refreshToken += 1
     }
-
-    // MARK: - Experimental streaming endpoint testing (disabled by default)
-    // These methods are kept for manual debugging but not called automatically
-    // to avoid 404 spam in logs. The working streaming approach is in streamURL(for:in:)
-
-    #if DEBUG
-    private func testStreamingEndpoints() async {
-        guard !libraries.isEmpty else { return }
-        
-        print("[ViewModel] Auto-testing streaming endpoints...")
-        
-        // Get the first library and fetch some items to test with
-        let firstLibrary = libraries[0]
-        if let testItems = await fetchItems(forLibrary: firstLibrary.id, limit: 1, sortBy: "addedAt", descBy: "1"),
-           let firstItem = testItems.first {
-            
-            // Get detailed item information
-            if let detailedItem = await fetchLibraryItemDetails(itemId: firstItem.id) {
-                print("[ViewModel] Testing streaming URLs for item: \(detailedItem.title)")
-                
-                // Test the 6 direct file access patterns
-                if let firstAudioFile = detailedItem.audioFiles.first,
-                   let filename = firstAudioFile.metadata?.filename {
-                    
-                    let testPaths = [
-                        "/api/items/\(detailedItem.id)/file/\(firstAudioFile.ino)",
-                        "/api/items/\(detailedItem.id)/file/\(filename)",
-                        "/local-files\(firstAudioFile.metadata?.path ?? "")",
-                        "/files\(firstAudioFile.metadata?.relPath ?? "")",
-                        "/static/\(detailedItem.id)/\(filename)",
-                        "/content/\(detailedItem.id)/\(filename)"
-                    ]
-                    
-                    for (index, path) in testPaths.enumerated() {
-                        await testSingleURL(path: path, testName: "Direct Pattern \(index + 1)")
-                
-                // Also test session-based streaming
-                await testSessionBasedStreaming(itemId: detailedItem.id, filename: filename)
-                    }
-                }
-                
-                // Also test track-based streaming if tracks exist
-                if let firstTrack = detailedItem.tracks.first {
-                    if let trackURL = streamURL(for: firstTrack, in: detailedItem) {
-                        await testSingleURLDirectly(url: trackURL, testName: "Track-based streaming")
-                    }
-                }
-            }
-        }
-        
-        print("[ViewModel] Completed auto-test of streaming endpoints")
-    }
-    
-    private func testSingleURL(path: String, testName: String) async {
-        guard var components = URLComponents(string: host) else { return }
-        components.path = path
-        
-        let cleanToken = apiKey.hasPrefix("Bearer ") ? String(apiKey.dropFirst(7)) : apiKey
-        components.queryItems = [URLQueryItem(name: "token", value: cleanToken)]
-        
-        guard let url = components.url else { return }
-        await testSingleURLDirectly(url: url, testName: testName)
-    }
-    
-    // Test session-based streaming approaches
-    private func testSessionBasedStreaming(itemId: String, filename: String) async {
-        print("[ViewModel] Testing session-based streaming approaches...")
-        await logToFile("Testing session-based streaming approaches...")
-        
-        // Test various session-based endpoints
-        let sessionPaths = [
-            "/api/items/\(itemId)/play",                    // Standard play endpoint
-            "/api/sessions/\(itemId)/stream",               // Session stream endpoint
-            "/api/sessions/local/\(itemId)",                // Local session endpoint
-            "/s/\(itemId)/stream",                          // Short stream endpoint
-            "/stream/\(itemId)",                            // Direct stream endpoint
-            "/api/stream/\(itemId)",                        // API stream endpoint
-        ]
-        
-        for (index, path) in sessionPaths.enumerated() {
-            await testSingleURL(path: path, testName: "Session Pattern \(index + 1)")
-        }
-        
-        // Test POST to start a playback session
-        await testStartPlaybackSession(itemId: itemId)
-    }
-    
-    // Test POST to start playback session
-    private func testStartPlaybackSession(itemId: String) async {
-        guard var components = URLComponents(string: host) else { return }
-        components.path = "/api/session/local"
-        
-        let cleanToken = apiKey.hasPrefix("Bearer ") ? String(apiKey.dropFirst(7)) : apiKey
-        components.queryItems = [URLQueryItem(name: "token", value: cleanToken)]
-        
-        guard let url = components.url else { return }
-        
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 10
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
-        // Create session start payload
-        let payload: [String: Any] = [
-            "libraryItemId": itemId,
-            "mediaPlayer": "html5",
-            "deviceInfo": [
-                "deviceId": "swiftshelf-tvos",
-                "name": "SwiftShelf Apple TV"
-            ]
-        ]
-        
-        do {
-            request.httpBody = try JSONSerialization.data(withJSONObject: payload)
-            let (data, response) = try await URLSession.shared.data(for: request)
-            
-            if let httpResponse = response as? HTTPURLResponse {
-                print("[ViewModel] Start Session: Status \(httpResponse.statusCode)")
-                await logToFile("Start Session: Status \(httpResponse.statusCode)")
-                
-                if httpResponse.statusCode == 200,
-                   let sessionResponse = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                    
-                    print("[ViewModel] ✅ Session created successfully!")
-                    await logToFile("✅ Session created successfully!")
-                    
-                    if let sessionId = sessionResponse["id"] as? String {
-                        print("[ViewModel] Session ID: \(sessionId)")
-                        await logToFile("Session ID: \(sessionId)")
-                        
-                        // Now test streaming with the session ID
-                        await testSessionStreaming(sessionId: sessionId, itemId: itemId)
-                    }
-                }
-            }
-        } catch {
-            print("[ViewModel] Start session failed: \(error.localizedDescription)")
-            await logToFile("Start session failed: \(error.localizedDescription)")
-        }
-    }
-    
-    // Test streaming with session ID
-    private func testSessionStreaming(sessionId: String, itemId: String) async {
-        let sessionStreamPaths = [
-            "/api/sessions/\(sessionId)/stream",
-            "/s/session/\(sessionId)",
-            "/session/\(sessionId)/stream",
-            "/api/stream/session/\(sessionId)"
-        ]
-        
-        for (index, path) in sessionStreamPaths.enumerated() {
-            await testSingleURL(path: path, testName: "Session Stream \(index + 1)")
-        }
-    }
-    
-    private func testSingleURLDirectly(url: URL, testName: String) async {
-        var request = URLRequest(url: url)
-        request.httpMethod = "HEAD"
-        request.timeoutInterval = 5
-        
-        do {
-            let (_, response) = try await URLSession.shared.data(for: request)
-            if let httpResponse = response as? HTTPURLResponse {
-                print("[ViewModel] \(testName): Status \(httpResponse.statusCode) - URL: \(url.absoluteString)")
-                await logToFile("\(testName): Status \(httpResponse.statusCode) - URL: \(url.absoluteString)")
-                
-                if httpResponse.statusCode == 200 {
-                    print("[ViewModel] ✅ SUCCESS: \(testName) returned 200!")
-                    await logToFile("✅ SUCCESS: \(testName) returned 200!")
-                }
-            }
-        } catch {
-            print("[ViewModel] \(testName) failed: \(error.localizedDescription)")
-            await logToFile("\(testName) failed: \(error.localizedDescription)")
-        }
-    }
-    
-    // Log to file for debugging
-    private func logToFile(_ message: String) async {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss"
-        let timestamp = formatter.string(from: Date())
-        let logLine = "[\(timestamp)] \(message)\n"
-        
-        guard let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
-            return
-        }
-        
-        let logFileURL = documentsDirectory.appendingPathComponent("streaming_debug.log")
-        
-        if let data = logLine.data(using: .utf8) {
-            if FileManager.default.fileExists(atPath: logFileURL.path) {
-                if let fileHandle = try? FileHandle(forWritingTo: logFileURL) {
-                    fileHandle.seekToEndOfFile()
-                    fileHandle.write(data)
-                    fileHandle.closeFile()
-                }
-            } else {
-                try? data.write(to: logFileURL)
-            }
-        }
-    }
-    
-    /// Public async method to test streaming endpoints for a specific LibraryItem.
-    /// This method replicates the batch testing logic but focuses on the provided item only.
-    /// 
-    /// Usage:
-    /// ```
-    /// await viewModel.testStreamingEndpoints(for: someLibraryItem)
-    /// ```
-    ///
-    /// It will:
-    /// 1. Fetch detailed item info if needed.
-    /// 2. Test direct file access endpoints.
-    /// 3. Test session-based streaming endpoints.
-    /// 4. Test track-based streaming endpoints.
-    /// 5. Logs and prints results for UI presentation.
-    @MainActor
-    public func testStreamingEndpoints(for item: LibraryItem) async {
-        print("[ViewModel] Starting streaming endpoint tests for item: \(item.title)")
-        await logToFile("Starting streaming endpoint tests for item: \(item.title)")
-        
-        // Fetch detailed item info, as some tests require audioFiles and tracks
-        let detailedItem: LibraryItem
-        if item.audioFiles.isEmpty || item.tracks.isEmpty {
-            if let fetchedItem = await fetchLibraryItemDetails(itemId: item.id) {
-                detailedItem = fetchedItem
-            } else {
-                print("[ViewModel] Failed to fetch detailed item info for streaming tests.")
-                await logToFile("Failed to fetch detailed item info for streaming tests.")
-                return
-            }
-        } else {
-            detailedItem = item
-        }
-        
-        // Test direct file endpoints
-        if let firstAudioFile = detailedItem.audioFiles.first,
-           let filename = firstAudioFile.metadata?.filename {
-            
-            let testPaths = [
-                "/api/items/\(detailedItem.id)/file/\(firstAudioFile.ino)",
-                "/api/items/\(detailedItem.id)/file/\(filename)",
-                "/local-files\(firstAudioFile.metadata?.path ?? "")",
-                "/files\(firstAudioFile.metadata?.relPath ?? "")",
-                "/static/\(detailedItem.id)/\(filename)",
-                "/content/\(detailedItem.id)/\(filename)"
-            ]
-            
-            for (index, path) in testPaths.enumerated() {
-                await testSingleURL(path: path, testName: "Direct Pattern \(index + 1)")
-            }
-            
-            // Also test session-based streaming endpoints for this item
-            await testSessionBasedStreaming(itemId: detailedItem.id, filename: filename)
-        } else {
-            print("[ViewModel] No audio files available to test direct/session streaming endpoints.")
-            await logToFile("No audio files available to test direct/session streaming endpoints.")
-        }
-        
-        // Test track-based streaming URLs if tracks exist
-        if let firstTrack = detailedItem.tracks.first {
-            if let trackURL = streamURL(for: firstTrack, in: detailedItem) {
-                await testSingleURLDirectly(url: trackURL, testName: "Track-based streaming")
-            } else {
-                print("[ViewModel] Failed to generate track stream URL.")
-                await logToFile("Failed to generate track stream URL.")
-            }
-        } else {
-            print("[ViewModel] No tracks available to test track-based streaming.")
-            await logToFile("No tracks available to test track-based streaming.")
-        }
-        
-        print("[ViewModel] Completed streaming endpoint tests for item: \(item.title)")
-        await logToFile("Completed streaming endpoint tests for item: \(item.title)")
-    }
-    #endif
-
 }
 
 
@@ -565,38 +368,15 @@ extension ViewModel {
         do {
             let (data, resp) = try await URLSession.shared.data(for: req)
             APILogger.logResponse(data, resp, description: "Fetch Library Item Details")
-            
-            // Additional detailed logging for streaming endpoints
-            if let rawResponse = String(data: data, encoding: .utf8) {
-                print("[ViewModel] Looking for streaming paths in API response...")
-                
-                // Search for potential streaming URLs or paths
-                if let tracksRange = rawResponse.range(of: "\"tracks\":") {
-                    let tracksSection = String(rawResponse[tracksRange.lowerBound...])
-                    if let endBracket = tracksSection.range(of: "]")?.upperBound {
-                        let tracksData = String(tracksSection[..<endBracket])
-                        print("[ViewModel] TRACKS SECTION: \(tracksData)")
-                    }
-                }
-                
-                if let audioFilesRange = rawResponse.range(of: "\"audioFiles\":") {
-                    let audioSection = String(rawResponse[audioFilesRange.lowerBound...])
-                    if let endBracket = audioSection.range(of: "]")?.upperBound {
-                        let audioData = String(audioSection[..<endBracket])
-                        print("[ViewModel] AUDIO FILES SECTION: \(audioData)")
-                    }
-                }
-            }
-            
+
             if let http = resp as? HTTPURLResponse, http.statusCode != 200 {
                 errorMessage = "Item details API returned \(http.statusCode)"
                 return nil
             }
-            
+
             let decoder = JSONDecoder()
             decoder.keyDecodingStrategy = .convertFromSnakeCase
             let item = try decoder.decode(LibraryItem.self, from: data)
-            print("[ViewModel] Successfully loaded item details: \(item.tracks.count) tracks, \(item.audioFiles.count) audio files")
             return item
         } catch {
             APILogger.logError(error, description: "Fetch Library Item Details")
@@ -608,23 +388,18 @@ extension ViewModel {
     // Build stream URL for a specific track within an item
     func streamURL(for track: LibraryItem.Track, in item: LibraryItem) -> URL? {
         guard var components = URLComponents(string: host) else { return nil }
-        
+
         // ContentUrl from API is a relative path, so we use it directly
         let contentPath = track.contentUrl.hasPrefix("/") ? track.contentUrl : "/\(track.contentUrl)"
         components.path = contentPath
-        
+
         let cleanToken = apiKey.hasPrefix("Bearer ") ? String(apiKey.dropFirst(7)) : apiKey
         components.queryItems = [
             URLQueryItem(name: "token", value: cleanToken)
         ]
-        let url = components.url
-        print("[ViewModel] Generated track stream URL: \(url?.absoluteString ?? "nil")")
-        print("[ViewModel] Track content URL: \(track.contentUrl)")
-        print("[ViewModel] Track mime type: \(track.mimeType ?? "unknown")")
-        print("[ViewModel] Host: \(host)")
-        return url
+        return components.url
     }
-    
+
     // Legacy method for backward compatibility (kept for audioFiles fallback)
     func streamURL(for audioFile: LibraryItem.AudioFile, in item: LibraryItem) -> URL? {
         guard var components = URLComponents(string: host) else { return nil }
@@ -635,45 +410,22 @@ extension ViewModel {
         components.queryItems = [
             URLQueryItem(name: "token", value: cleanToken)
         ]
-        let url = components.url
-        print("[ViewModel] Generated audio file stream URL: \(url?.absoluteString ?? "nil")")
-        return url
+        return components.url
     }
-    
+
     // Build direct file access URL based on actual audiobook file paths
     func streamURL(for item: LibraryItem) -> URL? {
-        // Get the first audio file from the item
-        guard let audioFile = item.audioFiles.first,
-              let filename = audioFile.metadata?.filename else {
-            print("[ViewModel] No audio files found for direct streaming")
+        guard let audioFile = item.audioFiles.first else {
             return nil
         }
-        
-        // Try direct file access patterns based on AudioBookshelf file serving
-        let possiblePaths = [
-            "/api/items/\(item.id)/file/\(audioFile.ino)",                    // File by ino (most likely)
-            "/api/items/\(item.id)/file/\(filename)",                         // File by filename
-            "/local-files\(audioFile.metadata?.path ?? "")",                 // Direct file path access
-            "/files\(audioFile.metadata?.relPath ?? "")",                    // Relative path access
-            "/static/\(item.id)/\(filename)",                                // Static file serving
-            "/content/\(item.id)/\(filename)",                               // Content serving
+
+        guard var components = URLComponents(string: host) else { return nil }
+        components.path = "/api/items/\(item.id)/file/\(audioFile.ino)"
+        let cleanToken = apiKey.hasPrefix("Bearer ") ? String(apiKey.dropFirst(7)) : apiKey
+        components.queryItems = [
+            URLQueryItem(name: "token", value: cleanToken)
         ]
-        
-        for path in possiblePaths {
-            guard var components = URLComponents(string: host) else { continue }
-            components.path = path
-            let cleanToken = apiKey.hasPrefix("Bearer ") ? String(apiKey.dropFirst(7)) : apiKey
-            components.queryItems = [
-                URLQueryItem(name: "token", value: cleanToken)
-            ]
-            
-            if let url = components.url {
-                print("[ViewModel] Trying direct file endpoint: \(url.absoluteString)")
-                return url
-            }
-        }
-        
-        return nil
+        return components.url
     }
     
     /// Save progress for a library item to the server
@@ -728,15 +480,16 @@ extension ViewModel {
             APILogger.logResponse(data, response, description: "Save Progress")
 
             if let httpResponse = response as? HTTPURLResponse {
+                #if DEBUG
                 if httpResponse.statusCode == 200 {
-                    print("[ViewModel] ✅ Progress saved: \(seconds)s / \(duration)s (\(Int(progress * 100))%)")
+                    print("[ViewModel] Progress saved: \(Int(seconds))s")
                 } else {
-                    print("[ViewModel] ❌ Save progress failed with status \(httpResponse.statusCode)")
+                    print("[ViewModel] Save progress failed: \(httpResponse.statusCode)")
                 }
+                #endif
             }
         } catch {
             APILogger.logError(error, description: "Save Progress")
-            print("[ViewModel] Error saving progress: \(error.localizedDescription)")
         }
     }
 
@@ -778,19 +531,18 @@ extension ViewModel {
                     let progressData = try decoder.decode(UserMediaProgress.self, from: data)
 
                     let currentTime = progressData.currentTime ?? 0
-                    print("[ViewModel] ✅ Progress loaded for \(item.title): \(currentTime)s (progress: \(progressData.progress ?? 0))")
+                    #if DEBUG
+                    print("[ViewModel] Progress loaded: \(Int(currentTime))s")
+                    #endif
                     return currentTime
                 } else if httpResponse.statusCode == 404 {
-                    print("[ViewModel] No progress found for item \(item.id)")
                     return nil
                 } else {
-                    print("[ViewModel] ❌ Load progress failed with status \(httpResponse.statusCode)")
                     return nil
                 }
             }
         } catch {
             APILogger.logError(error, description: "Load Progress")
-            print("[ViewModel] Error loading progress: \(error.localizedDescription)")
         }
 
         return nil

@@ -12,8 +12,6 @@ import WebKit
 
 struct ContentView: View {
     @AppStorage("recentSearches") private var recentSearchesRaw: String = "[]"
-    @AppStorage("host") private var persistedHost: String = ""
-    @AppStorage("apiKey") private var persistedApiKey: String = ""
 
     private var recentSearches: [String] {
         (try? JSONDecoder().decode([String].self, from: Data(recentSearchesRaw.utf8))) ?? []
@@ -42,7 +40,7 @@ struct ContentView: View {
 
     @FocusState private var searchFieldIsFocused: Bool
     @FocusState private var focusedResultID: String?
-    
+
     @State private var selectedMediaItem: LibraryItem? = nil
     @State private var selectedMediaItemForPlayback: LibraryItem? = nil
 
@@ -144,25 +142,24 @@ struct ContentView: View {
             }
         }
         .onAppear {
-            print("[ContentView] 👀 ContentView appeared")
-            print("[DEBUG] persistedHost: \(persistedHost), persistedApiKey: \(persistedApiKey), config.selected: \(config.selected.count)")
-            if !persistedHost.isEmpty && !persistedApiKey.isEmpty {
-                if vm.host.isEmpty { vm.host = persistedHost }
-                if vm.apiKey.isEmpty { vm.apiKey = persistedApiKey }
+            #if DEBUG
+            print("[ContentView] ContentView appeared")
+            print("[ContentView] host: \(vm.host.isEmpty ? "empty" : "set"), apiKey: \(vm.apiKey.isEmpty ? "empty" : "set"), selected libraries: \(config.selected.count)")
+            #endif
+            if !vm.host.isEmpty && !vm.apiKey.isEmpty {
                 if !config.selected.isEmpty {
-                    print("[ContentView] 🔗 Connecting to server...")
-                    Task { 
+                    #if DEBUG
+                    print("[ContentView] Connecting to server...")
+                    #endif
+                    Task {
                         await vm.connect()
                         // Fix first launch selection issue by ensuring data is loaded
-                        print("[ContentView] ⏳ Adding delay for data loading...")
                         try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second delay
-                        print("[ContentView] ✅ Connection and delay complete")
+                        #if DEBUG
+                        print("[ContentView] Connection complete")
+                        #endif
                     }
-                } else {
-                    print("[ContentView] ❌ No libraries selected")
                 }
-            } else {
-                print("[ContentView] ❌ Missing host or API key")
             }
         }
         .onChange(of: vm.isLoggedIn) { oldValue, newValue in
@@ -324,41 +321,29 @@ struct ContentView: View {
         VStack(spacing: 16) {
             Text("SwiftShelf").font(.title2)
             VStack(spacing: 8) {
-                TextField("Host", text: Binding(
-                    get: { persistedHost },
-                    set: { value in
-                        persistedHost = value
-                        vm.host = value
-                    }
-                ))
-                .padding(10)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color(.init(red: 0.15, green: 0.15, blue: 0.18, alpha: 1)))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.white.opacity(0.6), lineWidth: 2)
-                )
-                .autocapitalization(.none)
-                .disableAutocorrection(true)
+                TextField("Host", text: $vm.host)
+                    .padding(10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color(.init(red: 0.15, green: 0.15, blue: 0.18, alpha: 1)))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color.white.opacity(0.6), lineWidth: 2)
+                    )
+                    .autocapitalization(.none)
+                    .disableAutocorrection(true)
 
-                SecureField("API Key", text: Binding(
-                    get: { persistedApiKey },
-                    set: { value in
-                        persistedApiKey = value
-                        vm.apiKey = value
-                    }
-                ))
-                .padding(10)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color(.init(red: 0.15, green: 0.15, blue: 0.18, alpha: 1)))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.white.opacity(0.6), lineWidth: 2)
-                )
+                SecureField("API Key", text: $vm.apiKey)
+                    .padding(10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color(.init(red: 0.15, green: 0.15, blue: 0.18, alpha: 1)))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color.white.opacity(0.6), lineWidth: 2)
+                    )
             }
             .onAppear {
                 #if DEBUG
@@ -366,23 +351,16 @@ struct ContentView: View {
                 if let configURL = Bundle.main.url(forResource: ".swiftshelf-config", withExtension: "json"),
                    let data = try? Data(contentsOf: configURL),
                    let config = try? JSONDecoder().decode(DevConfig.self, from: data) {
-                    if persistedHost.isEmpty {
-                        persistedHost = config.host
-                        vm.host = config.host
-                    }
-                    if persistedApiKey.isEmpty {
-                        persistedApiKey = config.apiKey
-                        vm.apiKey = config.apiKey
+                    if vm.host.isEmpty {
+                        vm.saveCredentialsToKeychain(host: config.host, apiKey: config.apiKey)
                     }
                 }
                 #endif
-
-                if vm.host != persistedHost { vm.host = persistedHost }
-                if vm.apiKey != persistedApiKey { vm.apiKey = persistedApiKey }
             }
-            
+
             Button {
                 Task {
+                    vm.saveCredentialsToKeychain(host: vm.host, apiKey: vm.apiKey)
                     await vm.connect()
                 }
             } label: {
@@ -445,23 +423,7 @@ struct ContentView: View {
             var request = URLRequest(url: url)
             request.setValue("Bearer \(vm.apiKey)", forHTTPHeaderField: "Authorization")
 
-            print("\n=== [SEARCH REQUEST] ===")
-            print("Query: \(searchText)")
-            print("URL: \(urlString)")
-            print("======================\n")
-
             let (data, response) = try await URLSession.shared.data(for: request)
-            
-            print("\n=== [SEARCH RESPONSE] ===")
-            if let httpResponse = response as? HTTPURLResponse {
-                print("Status: \(httpResponse.statusCode)")
-                print("Data size: \(data.count) bytes")
-                if let responseString = String(data: data, encoding: .utf8) {
-                    let preview = responseString.count > 500 ? String(responseString.prefix(500)) + "..." : responseString
-                    print("Response: \(preview)")
-                }
-            }
-            print("=======================\n")
             
             guard let httpResponse = response as? HTTPURLResponse else {
                 vm.errorMessage = "Invalid response."

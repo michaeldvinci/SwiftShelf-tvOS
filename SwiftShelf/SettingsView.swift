@@ -205,15 +205,12 @@ struct SettingsView: View {
                         Text("Login")
                     }
                     .sheet(isPresented: $showLoginSheet) {
-                        LoginSheetView(host: $loginHost, apiKey: $loginApiKey)
+                        LoginSheetView()
+                            .environmentObject(vm)
                     }
                     
                     Button(role: .destructive) {
-                        // Logout action
-                        UserDefaults.standard.set("", forKey: "host")
-                        UserDefaults.standard.set("", forKey: "apiKey")
-                        vm.host = ""
-                        vm.apiKey = ""
+                        vm.logout()
                         vm.libraries = []
                         vm.errorMessage = nil
                         vm.isLoggedIn = false
