@@ -2,7 +2,7 @@
 //  LibraryItem.swift
 //  SwiftShelf
 //
-//  Created by Michael Vinci on 8/2/25.
+//  Created by michaeldvinci on 8/2/25.
 //
 
 import Foundation
@@ -27,6 +27,15 @@ struct LibraryItem: Identifiable, Codable {
     var duration: Double? {
         media?.duration
     }
+    var audioFiles: [AudioFile] {
+        media?.audioFiles ?? []
+    }
+    var chapters: [Chapter] {
+        media?.chapters ?? []
+    }
+    var tracks: [Track] {
+        media?.tracks ?? []
+    }
     
     let addedAt: Double?
     let updatedAt: Double?
@@ -35,6 +44,9 @@ struct LibraryItem: Identifiable, Codable {
         let duration: Double?
         let coverPath: String?
         let metadata: Metadata
+        let audioFiles: [AudioFile]?
+        let chapters: [Chapter]?
+        let tracks: [Track]?
 
         struct Metadata: Codable {
             let title: String?
@@ -50,6 +62,72 @@ struct LibraryItem: Identifiable, Codable {
             struct Series: Codable {
                 let name: String
             }
+        }
+    }
+    
+    struct AudioFile: Identifiable, Codable {
+        let index: Int
+        let ino: String
+        let filename: String?
+        let format: String?
+        let duration: Double?
+        let bitRate: Int?
+        let language: String?
+        let codec: String?
+        let timeBase: String?
+        let channels: Int?
+        let channelLayout: String?
+        let addedAt: Double?
+        let updatedAt: Double?
+        let trackNumFromMeta: Int?
+        let discNumFromMeta: Int?
+        let trackNumFromFilename: Int?
+        let discNumFromFilename: Int?
+        let manuallyVerified: Bool?
+        let invalid: Bool?
+        let exclude: Bool?
+        let error: String?
+        let mimeType: String
+        let metadata: AudioFileMetadata?
+        
+        var id: String { ino }
+        
+        struct AudioFileMetadata: Codable {
+            let filename: String?
+            let ext: String?
+            let path: String?
+            let relPath: String?
+            let size: Int64?
+            let mtimeMs: Int64?
+            let ctimeMs: Int64?
+            let birthtimeMs: Int64?
+        }
+    }
+    
+    struct Chapter: Identifiable, Codable {
+        let id: Int
+        let start: Double
+        let end: Double
+        let title: String
+    }
+    
+    struct Track: Identifiable, Codable {
+        let index: Int
+        let startOffset: Double?
+        let duration: Double?
+        let title: String?
+        let contentUrl: String
+        let mimeType: String?
+        let metadata: TrackMetadata?
+        
+        var id: Int { index }
+        
+        struct TrackMetadata: Codable {
+            let filename: String?
+            let ext: String?
+            let path: String?
+            let relPath: String?
+            let size: Int64?
         }
     }
 }

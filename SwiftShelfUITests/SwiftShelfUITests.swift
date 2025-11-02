@@ -2,7 +2,7 @@
 //  SwiftShelfUITests.swift
 //  SwiftShelfUITests
 //
-//  Created by Michael Vinci on 8/2/25.
+//  Created by michaeldvinci on 8/2/25.
 //
 
 import XCTest

@@ -34,7 +34,7 @@ struct LoginSheetView: View {
 }
 
 #Preview {
-    @State var h: String = "demo"
-    @State var k: String = "secret"
+    @Previewable @State var h: String = "demo"
+    @Previewable @State var k: String = "secret"
     return LoginSheetView(host: $h, apiKey: $k)
 }

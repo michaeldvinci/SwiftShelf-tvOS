@@ -2,7 +2,7 @@
 //  LibrarySelectionView.swift
 //  SwiftShelf
 //
-//  Created by Michael Vinci on 8/2/25.
+//  Created by michaeldvinci on 8/2/25.
 //
 
 // View that allows users to select libraries from a list and update the selected libraries configuration.

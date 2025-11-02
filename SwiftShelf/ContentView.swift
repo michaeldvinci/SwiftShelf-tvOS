@@ -2,10 +2,13 @@
 //  ContentView.swift
 //  SwiftShelf
 //
-//  Created by Michael Vinci on 8/2/25.
+//  Created by michaeldvinci on 8/2/25.
 //
 
 import SwiftUI
+#if canImport(WebKit)
+import WebKit
+#endif
 
 struct ContentView: View {
     @AppStorage("recentSearches") private var recentSearchesRaw: String = "[]"
@@ -23,6 +26,7 @@ struct ContentView: View {
 
     @EnvironmentObject var vm: ViewModel
     @EnvironmentObject var config: LibraryConfig
+    @EnvironmentObject var audioManager: GlobalAudioManager
     @Environment(\.scenePhase) private var scenePhase
     @State private var selectedTabIndex = 0
     @State private var wasLoggedIn = false
@@ -40,40 +44,56 @@ struct ContentView: View {
     @FocusState private var focusedResultID: String?
     
     @State private var selectedMediaItem: LibraryItem? = nil
+    @State private var selectedMediaItemForPlayback: LibraryItem? = nil
+
+    @State private var showYouTubePlayer = false
 
     var body: some View {
-        Group {
-            if config.selected.isEmpty {
-                connectionSelectionPane
-            } else {
-                TabView(selection: $selectedTabIndex) {
-                    searchTabView
-                        .onAppear {
-                            searchFieldIsFocused = true
-                        }
-                        .tabItem {
-                            Image(systemName: "magnifyingglass")
-                        }
-                        .tag(-1)
+        VStack(spacing: 0) {
+            Group {
+                if config.selected.isEmpty {
+                    connectionSelectionPane
+                } else {
+                    TabView(selection: $selectedTabIndex) {
+                        searchTabView
+                            .onAppear {
+                                searchFieldIsFocused = true
+                            }
+                            .tabItem {
+                                Image(systemName: "magnifyingglass")
+                            }
+                            .tag(-1)
 
-                    ForEach(Array(config.selected.enumerated()), id: \.element.id) { idx, lib in
-                        LibraryDetailView(library: lib)
+                        ForEach(Array(config.selected.enumerated()), id: \.element.id) { idx, lib in
+                            LibraryDetailView(library: lib)
+                                .environmentObject(vm)
+                                .environmentObject(config)
+                                .environmentObject(audioManager)
+                                .tabItem {
+                                    Text(lib.name)
+                                }
+                                .tag(idx)
+                        }
+
+                        SettingsView()
                             .environmentObject(vm)
                             .environmentObject(config)
                             .tabItem {
-                                Text(lib.name)
+                                Image(systemName: "gear")
                             }
-                            .tag(idx)
+                            .tag(config.selected.count)
                     }
-
-                    SettingsView()
-                        .environmentObject(vm)
-                        .environmentObject(config)
-                        .tabItem {
-                            Image(systemName: "gear")
-                        }
-                        .tag(config.selected.count)
                 }
+            }
+            
+            // Global compact player
+            if audioManager.currentItem != nil {
+                CompactPlayerView()
+                    .environmentObject(audioManager)
+                    .environmentObject(vm)
+                    .onAppear {
+                        print("[ContentView] 📱 Showing compact player for: \(audioManager.currentItem!.title)")
+                    }
             }
         }
         .sheet(isPresented: $showSelection) {
@@ -82,9 +102,22 @@ struct ContentView: View {
                 .environmentObject(config)
         }
         .sheet(item: $selectedMediaItem) { item in
+            // Use MediaPlayerView for proper tvOS integration with artwork
             MediaPlayerView(item: item)
                 .environmentObject(vm)
+                .environmentObject(audioManager)
         }
+        // Unify playback UI for search and library selections:
+        .sheet(item: $selectedMediaItemForPlayback) { item in
+            MediaPlayerView(item: item)
+                .environmentObject(vm)
+                .environmentObject(audioManager)
+        }
+        #if canImport(WebKit)
+        .sheet(isPresented: $showYouTubePlayer) {
+            YouTubePlayerView(videoID: "NflgXN2oekM")
+        }
+        #endif
         .onChange(of: scenePhase) { oldPhase, newPhase in
             if newPhase == .active {
                 Task {
@@ -96,13 +129,25 @@ struct ContentView: View {
             }
         }
         .onAppear {
+            print("[ContentView] 👀 ContentView appeared")
             print("[DEBUG] persistedHost: \(persistedHost), persistedApiKey: \(persistedApiKey), config.selected: \(config.selected.count)")
             if !persistedHost.isEmpty && !persistedApiKey.isEmpty {
                 if vm.host.isEmpty { vm.host = persistedHost }
                 if vm.apiKey.isEmpty { vm.apiKey = persistedApiKey }
                 if !config.selected.isEmpty {
-                    Task { await vm.connect() }
+                    print("[ContentView] 🔗 Connecting to server...")
+                    Task { 
+                        await vm.connect()
+                        // Fix first launch selection issue by ensuring data is loaded
+                        print("[ContentView] ⏳ Adding delay for data loading...")
+                        try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second delay
+                        print("[ContentView] ✅ Connection and delay complete")
+                    }
+                } else {
+                    print("[ContentView] ❌ No libraries selected")
                 }
+            } else {
+                print("[ContentView] ❌ Missing host or API key")
             }
         }
         .onChange(of: vm.isLoggedIn) { oldValue, newValue in
@@ -181,7 +226,8 @@ struct ContentView: View {
                                 ForEach(section.items) { item in
                                     if section.title == "Books", let libItem = item.libraryItem {
                                         Button {
-                                            selectedMediaItem = libItem
+                                            // Instead of any other action, unify playback UI by setting selectedMediaItemForPlayback
+                                            selectedMediaItemForPlayback = libItem
                                         } label: {
                                             HStack(spacing: 12) {
                                                 if let cachedImage = coverCache[item.id] {
@@ -356,7 +402,7 @@ struct ContentView: View {
             let host = vm.host.trimmingCharacters(in: .whitespacesAndNewlines)
             let libraryID = firstLibrary.id
             let query = searchText.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-            let urlString = "\(host)/audiobookshelf/api/libraries/\(libraryID)/search?q=\(query)&limit=5"
+            let urlString = "\(host)/api/libraries/\(libraryID)/search?q=\(query)&limit=5"
 
             guard let url = URL(string: urlString) else {
                 vm.errorMessage = "Invalid search URL."
@@ -368,7 +414,24 @@ struct ContentView: View {
             var request = URLRequest(url: url)
             request.setValue("Bearer \(vm.apiKey)", forHTTPHeaderField: "Authorization")
 
+            print("\n=== [SEARCH REQUEST] ===")
+            print("Query: \(searchText)")
+            print("URL: \(urlString)")
+            print("======================\n")
+
             let (data, response) = try await URLSession.shared.data(for: request)
+            
+            print("\n=== [SEARCH RESPONSE] ===")
+            if let httpResponse = response as? HTTPURLResponse {
+                print("Status: \(httpResponse.statusCode)")
+                print("Data size: \(data.count) bytes")
+                if let responseString = String(data: data, encoding: .utf8) {
+                    let preview = responseString.count > 500 ? String(responseString.prefix(500)) + "..." : responseString
+                    print("Response: \(preview)")
+                }
+            }
+            print("=======================\n")
+            
             guard let httpResponse = response as? HTTPURLResponse else {
                 vm.errorMessage = "Invalid response."
                 searchSections = []
@@ -377,7 +440,7 @@ struct ContentView: View {
             }
 
             guard httpResponse.statusCode == 200 else {
-                vm.errorMessage = "Search request failed."
+                vm.errorMessage = "Search request failed with status \(httpResponse.statusCode)."
                 searchSections = []
                 isSearching = false
                 return
@@ -486,4 +549,6 @@ struct ContentView: View {
         let libraryItem: LibraryItem?
     }
 }
+
+// YouTubePlayerView moved to separate file YouTubePlayerView.swift
 

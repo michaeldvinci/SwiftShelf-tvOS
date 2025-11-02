@@ -7,7 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		F52C409C2E3FBB2600DEC966 /* CoverArtView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F52C409B2E3FBB2600DEC966 /* CoverArtView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -28,7 +27,6 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		F52C409B2E3FBB2600DEC966 /* CoverArtView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoverArtView.swift; sourceTree = "<group>"; };
 		F59002FF2E3EAB1300937EE7 /* SwiftShelf.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SwiftShelf.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		F590030C2E3EAB1500937EE7 /* SwiftShelfTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SwiftShelfTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		F59003162E3EAB1500937EE7 /* SwiftShelfUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SwiftShelfUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -84,7 +82,6 @@
 				F590030F2E3EAB1500937EE7 /* SwiftShelfTests */,
 				F59003192E3EAB1500937EE7 /* SwiftShelfUITests */,
 				F59003002E3EAB1300937EE7 /* Products */,
-				F52C409B2E3FBB2600DEC966 /* CoverArtView.swift */,
 			);
 			sourceTree = "<group>";
 		};
@@ -242,7 +239,6 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				F52C409C2E3FBB2600DEC966 /* CoverArtView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

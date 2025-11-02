@@ -2,7 +2,7 @@
 //  LibraryDetailView.swift
 //  SwiftShelf
 //
-//  Created by Michael Vinci on 8/2/25.
+//  Created by michaeldvinci on 8/2/25.
 //
 
 import SwiftUI
@@ -57,6 +57,7 @@ struct LibraryDetailView: View {
 
     @EnvironmentObject var vm: ViewModel
     @EnvironmentObject var config: LibraryConfig
+    @EnvironmentObject var audioManager: GlobalAudioManager
 
     @State private var items: [LibraryItem] = []
     @State private var unfinished: [LibraryItem] = []
@@ -64,12 +65,15 @@ struct LibraryDetailView: View {
     @State private var isLoadingUnfinished = false
     @State private var coverImages: [String: (Image, UIImage)] = [:]
 
+    // Restore state variables to manage in-app media player presentation
     @State private var selectedItem: LibraryItem? = nil
     @State private var showItemPopup = false
 
     private let thumbSize: CGFloat = 225
 
-    private var selectedCover: (Image, UIImage)? { selectedItem.flatMap { coverImages[$0.id] } }
+    // Unified audio-player UI for all playback sources: selection always sets selectedItem and presents MediaPlayerView fullScreenCover.
+    // No system alert or external URL opening for missing audio streams; MediaPlayerView handles audio availability UI.
+    // Unified player matches AVPlayerViewController style, showing artwork above system controls.
 
     var body: some View {
         VStack(spacing: 40) {
@@ -95,6 +99,8 @@ struct LibraryDetailView: View {
                                 loadCover: { await vm.loadCover(for: $0) },
                                 thumbSize: thumbSize,
                                 onSelect: { item in
+                                    print("[LibraryCarouselView] 🎯 Recent item selected: \(item.title)")
+                                    // Always show in-app media player for selected item regardless of audio presence
                                     selectedItem = item
                                     showItemPopup = true
                                 }
@@ -122,6 +128,8 @@ struct LibraryDetailView: View {
                                 loadCover: { await vm.loadCover(for: $0) },
                                 thumbSize: thumbSize,
                                 onSelect: { item in
+                                    print("[LibraryCarouselView] 🎯 Continue item selected: \(item.title)")
+                                    // Always show in-app media player for selected item regardless of audio presence
                                     selectedItem = item
                                     showItemPopup = true
                                 }
@@ -137,12 +145,18 @@ struct LibraryDetailView: View {
             Spacer()
         }
         .navigationTitle("")
-        .sheet(isPresented: $showItemPopup) {
+        .fullScreenCover(isPresented: $showItemPopup, onDismiss: {
+            selectedItem = nil
+        }) {
             if let selectedItem = selectedItem {
+                // Present unified MediaPlayerView on all platforms, matching AVPlayerViewController style
                 MediaPlayerView(item: selectedItem)
+                    .environmentObject(vm)
+                    .environmentObject(audioManager)
             }
         }
         .onAppear {
+            print("[LibraryDetailView] 👀 LibraryDetailView appeared for library: \(library.name)")
             Task { await loadItems() }
         }
         .onChange(of: vm.refreshToken) { _, _ in
@@ -248,6 +262,7 @@ struct LibraryDetailView: View {
 
         var body: some View {
             Button {
+                print("[CarouselItemView] Item selected: \(item.title)")
                 onSelect()
             } label: {
                 VStack(alignment: .leading, spacing: 8) {

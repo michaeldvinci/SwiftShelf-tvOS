@@ -1,3 +1,10 @@
+//
+//  CoverArtView.swift
+//  SwiftShelf
+//
+//  Created by michaeldvinci on 8/3/25.
+//
+
 import SwiftUI
 
 struct CoverArtView: View {
