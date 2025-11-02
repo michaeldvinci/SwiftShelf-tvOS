@@ -29,6 +29,9 @@ final class GlobalAudioManager: NSObject, ObservableObject {
     private var playerViewModel: PlayerViewModel?
     private var cancellables = Set<AnyCancellable>()
     
+    // Cached resume position (seconds) to apply on first play after load
+    private var pendingResumeSeconds: Double?
+    
     private override init() {
         super.init()
         print("[GlobalAudioManager] 🎬 Initialized")
@@ -66,11 +69,25 @@ final class GlobalAudioManager: NSObject, ObservableObject {
         print("[GlobalAudioManager] ⚙️ Configuring and preparing player...")
         await newPlayerVM.configureAndPrepare()
         
+        // Pre-fetch last progress but do not seek yet; apply on first play
+        if let last = await appVM.loadProgress(for: item) {
+            let resume = max(0, last - 5)
+            print("[GlobalAudioManager] ⏪ Cached resume position: \(resume)s (from server: \(last)s)")
+            self.pendingResumeSeconds = resume
+        } else {
+            self.pendingResumeSeconds = nil
+        }
+        
         print("[GlobalAudioManager] ✅ Item loading complete")
     }
     
     func play() {
         print("[GlobalAudioManager] ▶️ Play requested")
+        if let resume = pendingResumeSeconds, resume > 0 {
+            print("[GlobalAudioManager] ⤴️ Applying cached resume before play: \(resume)s")
+            playerViewModel?.seek(to: resume)
+            pendingResumeSeconds = nil
+        }
         playerViewModel?.play()
     }
     
@@ -144,6 +161,7 @@ final class GlobalAudioManager: NSObject, ObservableObject {
         currentTrackIndex = 0
         currentTrackTitle = ""
         hasAudioStream = false
+        pendingResumeSeconds = nil
         print("[GlobalAudioManager] 🔄 State reset complete")
     }
     

@@ -137,6 +137,15 @@ struct ResultsWrapper: Codable {
 }
 
 struct UserMediaProgress: Codable {
+    let id: String?
+    let libraryItemId: String?
+    let episodeId: String?
+    let duration: Double?
     let progress: Double?
+    let currentTime: Double?
     let isFinished: Bool?
+    let hideFromContinueListening: Bool?
+    let lastUpdate: Double?
+    let startedAt: Double?
+    let finishedAt: Double?
 }

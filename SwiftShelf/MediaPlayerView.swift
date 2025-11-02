@@ -42,6 +42,7 @@ struct NowPlayingBanner: View {
 
     let artwork: Image
     let title: String
+    let chapterTitle: String?
     let duration: Double
     let currentTime: Double
     let isPlaying: Bool
@@ -65,6 +66,18 @@ struct NowPlayingBanner: View {
         GeometryReader { geo in
             VStack(spacing: 16) {
                 VStack(spacing: 8) {
+                    VStack(spacing: 2) {
+                        Text(title)
+                            .font(.headline)
+                            .lineLimit(1)
+                            .foregroundColor(.primary)
+                        if let chapter = chapterTitle, !chapter.isEmpty {
+                            Text(chapter)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
                     HStack(spacing: 8) {
                         Text(formatDuration(currentTime))
                             .font(.caption)
@@ -269,6 +282,10 @@ final class PlayerViewModel: NSObject, ObservableObject {
         await MainActor.run {
             self.setupSession()
             self.loadingStatus = "Fetching item details..."
+
+            // Initialize playback rate from global preference
+            let preferred = UserDefaults.standard.object(forKey: "preferredPlaybackRate") as? Double ?? 1.0
+            self.rate = Float(preferred)
         }
 
         // First, try to fetch the detailed item to see what endpoints are actually available
@@ -526,6 +543,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         let options: [Float] = [0.8, 1.0, 1.25, 1.5, 1.75, 2.0]
         if let idx = options.firstIndex(of: rate) { rate = options[(idx + 1) % options.count] } else { rate = 1.0 }
         player?.rate = isPlaying ? rate : 0
+        UserDefaults.standard.set(Double(rate), forKey: "preferredPlaybackRate")
         updateNowPlaying()
     }
 
@@ -537,6 +555,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         } else {
             player?.rate = 0
         }
+        UserDefaults.standard.set(Double(rate), forKey: "preferredPlaybackRate")
         updateNowPlaying()
     }
 
@@ -815,8 +834,8 @@ struct MediaPlayerView: View {
                 .cornerRadius(24)
                 .shadow(radius: 20)
                 .padding(40)
-            } else if audioManager.avPlayer != nil {
-                // Custom audio UI with artwork instead of black AVPlayerViewController
+            } else {
+                // Popup overlay showing selected item's info. If this item is the active one, show full controls; otherwise offer Play to switch.
                 VStack(spacing: 20) {
                     if let img = audioManager.coverArt?.0 {
                         img
@@ -836,56 +855,69 @@ struct MediaPlayerView: View {
                     }
 
                     VStack(spacing: 4) {
-                        Text(audioManager.currentItem?.title ?? item.title)
+                        Text(item.title)
                             .font(.title.bold())
                             .foregroundColor(.white)
-                        if let author = audioManager.currentItem?.authorNameLF ?? audioManager.currentItem?.authorName ?? item.authorNameLF ?? item.authorName {
+                        if let author = item.authorNameLF ?? item.authorName {
                             Text(author)
                                 .font(.headline)
                                 .foregroundColor(.secondary)
                         }
                     }
 
-                    NowPlayingBanner(
-                        scrubberFocus: $focusMiniPlayer,
-                        artwork: (audioManager.coverArt?.0) ?? Image(systemName: "music.note"),
-                        title: audioManager.currentItem?.title ?? item.title,
-                        duration: audioManager.duration,
-                        currentTime: audioManager.currentTime,
-                        isPlaying: audioManager.isPlaying,
-                        onPlayPause: { audioManager.togglePlayPause() },
-                        onRewind: { audioManager.skip(-15) },
-                        onForward: { audioManager.skip(15) },
-                        onSeek: { audioManager.seek(to: $0) },
-                        onPrevChapter: { audioManager.previousChapter() },
-                        onNextChapter: { audioManager.nextChapter() },
-                        rate: audioManager.rate,
-                        onToggleRate: { audioManager.toggleRate() },
-                        sleepLabel: audioManager.sleepRemaining.map { secs in
-                            let m = Int(secs) / 60; let s = Int(secs) % 60; return String(format: "%d:%02d", m, s)
-                        },
-                        onSetSleep: { audioManager.setSleep(minutes: 15) }
-                    )
-                    .padding(.bottom, 12)
+                    if audioManager.currentItem?.id == item.id, audioManager.avPlayer != nil {
+                        NowPlayingBanner(
+                            scrubberFocus: $focusMiniPlayer,
+                            artwork: (audioManager.coverArt?.0) ?? Image(systemName: "music.note"),
+                            title: item.title,
+                            chapterTitle: audioManager.currentTrackTitle,
+                            duration: audioManager.duration,
+                            currentTime: audioManager.currentTime,
+                            isPlaying: audioManager.isPlaying,
+                            onPlayPause: { audioManager.togglePlayPause() },
+                            onRewind: { audioManager.skip(-15) },
+                            onForward: { audioManager.skip(15) },
+                            onSeek: { audioManager.seek(to: $0) },
+                            onPrevChapter: { audioManager.previousChapter() },
+                            onNextChapter: { audioManager.nextChapter() },
+                            rate: audioManager.rate,
+                            onToggleRate: { audioManager.toggleRate() },
+                            sleepLabel: audioManager.sleepRemaining.map { secs in
+                                let m = Int(secs) / 60; let s = Int(secs) % 60; return String(format: "%d:%02d", m, s)
+                            },
+                            onSetSleep: { audioManager.setSleep(minutes: 15) }
+                        )
+                        .padding(.bottom, 12)
+                    } else {
+                        VStack(spacing: 12) {
+                            Text("This item is not currently active.")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                            HStack(spacing: 16) {
+                                Button("Play") {
+                                    Task {
+                                        print("[MediaPlayerView] ▶️ Play selected item from overlay: \(item.title)")
+                                        await audioManager.loadItem(item, appVM: viewModel)
+                                        if let last = await viewModel.loadProgress(for: item) {
+                                            print("[MediaPlayerView] ⏭️ Restoring progress to: \(last)s")
+                                            audioManager.seek(to: last)
+                                        }
+                                        audioManager.togglePlayPause()
+                                    }
+                                }
+                                .buttonStyle(.borderedProminent)
+
+                                Button("Close") {
+                                    dismiss()
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                        }
+                        .padding(.bottom, 12)
+                    }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color.black)
-            } else {
-                VStack(spacing: 20) {
-                    ProgressView()
-                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                        .scaleEffect(2)
-
-                    Text("Loading \(item.title)...")
-                        .font(.headline)
-                        .foregroundColor(.white)
-                        .padding(.top)
-
-                    Text(audioManager.loadingStatus)
-                        .font(.caption)
-                        .foregroundColor(.gray)
-                        .padding(.top, 8)
-                }
             }
         }
         .task {
@@ -909,18 +941,20 @@ struct MediaPlayerView: View {
         print("[MediaPlayerView] 🚀 Initial load starting for item: \(item.title)")
         print("[MediaPlayerView] 🔍 Current item in audioManager: \(audioManager.currentItem?.title ?? "None")")
         
-        // Only load if this isn't already the current item
-        if audioManager.currentItem?.id != item.id {
-            print("[MediaPlayerView] 🔄 Loading new item into audioManager")
+        // Only load if there's no current item; don't auto-switch from an existing mini player item
+        if audioManager.currentItem == nil {
+            print("[MediaPlayerView] 🆕 No current item — loading selected item into audioManager")
             await audioManager.loadItem(item, appVM: viewModel)
-            
+
             // Restore last position from server
             if let last = await viewModel.loadProgress(for: item) {
                 print("[MediaPlayerView] ⏭️ Restoring progress to: \(last)s")
                 audioManager.seek(to: last)
             }
-        } else {
+        } else if audioManager.currentItem?.id == item.id {
             print("[MediaPlayerView] ✅ Item already loaded in audioManager")
+        } else {
+            print("[MediaPlayerView] ⏸️ Different item is already in mini player — not auto-switching")
         }
         
         print("[MediaPlayerView] ✅ Initial load complete")
