@@ -1,0 +1,14 @@
+name: apt-test
+run-name: apt-test
+
+on: push
+
+jobs:
+  apt:
+    runs-on: ubuntu-latest
+    steps:
+      - run: apt install yq --yqq
+  sudo-apt:
+    runs-on: ubuntu-latest
+    steps:
+      - run: sudo apt install yq --yqq
