@@ -7,8 +7,8 @@ jobs:
   apt:
     runs-on: ubuntu-latest
     steps:
-      - run: apt install yq --yqq
+      - run: apt install yq -y
   sudo-apt:
     runs-on: ubuntu-latest
     steps:
-      - run: sudo apt install yq --yqq
+      - run: sudo apt install yq -y
