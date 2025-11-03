@@ -1,6 +1,8 @@
 # SwiftShelf
 
-![banner](_res/banner.jpg)
+<p align="center">
+  <img src="_res/banner.jpg" alt="SwiftShelf Icon" width="500"/>
+</p>
 
 SwiftShelf is a tvOS Audiobookshelf client built in SwiftUI. It combines fast, focused navigation of your Audiobookshelf libraries with fully integrated playback, presenting your collection in a sleek carousel interface that stays remote-friendly.
 
