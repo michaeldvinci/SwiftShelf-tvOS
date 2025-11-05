@@ -257,7 +257,8 @@ class ViewModel: ObservableObject {
         components.queryItems = [
             URLQueryItem(name: "limit", value: "\(limitParam)"),
             URLQueryItem(name: "sort", value: sortBy),
-            URLQueryItem(name: "desc", value: descBy)
+            URLQueryItem(name: "desc", value: descBy),
+            URLQueryItem(name: "expanded", value: "1")
         ]
         guard let url = components.url else {
             errorMessage = "Bad items URL"
@@ -281,11 +282,19 @@ class ViewModel: ObservableObject {
             
             let decoder = JSONDecoder()
             decoder.keyDecodingStrategy = .convertFromSnakeCase
-            
+
             if let wrapper = try? decoder.decode(ResultsWrapper.self, from: data) {
+                #if DEBUG
+                if let firstItem = wrapper.results.first {
+                    print("[ViewModel] First item chapters count: \(firstItem.chapters.count)")
+                    if !firstItem.chapters.isEmpty {
+                        print("[ViewModel] First chapter: \(firstItem.chapters[0].title)")
+                    }
+                }
+                #endif
                 return wrapper.results
             }
-            
+
             errorMessage = "Unexpected JSON structure for library items"
             return nil
         } catch {

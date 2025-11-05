@@ -49,16 +49,19 @@ struct SettingsView: View {
     }
     
     var body: some View {
-        NavigationView {
-            Form {
-                Section {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                // Section: Info note
+                VStack(alignment: .leading, spacing: 8) {
                     Text("Libraries will automatically refresh when settings are saved.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .padding(.top, 2)
                 }
-                
-                Section(header: Text("Library Settings")) {
+
+                // Section: Library Settings
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Library Settings").font(.headline)
                     VStack(alignment: .leading) {
                         HStack {
                             Button(action: { if draftLimit > 5 { draftLimit -= 1 } }) {
@@ -89,12 +92,12 @@ struct SettingsView: View {
                     }
                 }
 
-                Section(header: Text("Appearance")) {
-                    VStack(alignment: .leading, spacing: 16) {
-                        Text("Progress Bar Color")
-                            .font(.headline)
+                // Section: Appearance
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Appearance").font(.headline)
 
-                        // Color buttons in a horizontal scroll
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("Progress Bar Color").font(.headline)
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 24) {
                                 ForEach(ProgressBarColor.allCases) { colorOption in
@@ -103,29 +106,24 @@ struct SettingsView: View {
                                         vm.objectWillChange.send()
                                     } label: {
                                         ZStack {
-                                            // Background circle for selection
                                             if progressBarColor == colorOption {
                                                 Circle()
                                                     .fill(Color.white.opacity(0.15))
                                                     .frame(width: 80, height: 80)
                                             }
-
-                                            // Color circle
                                             if colorOption == .rainbow {
                                                 RainbowPreview()
                                                     .frame(width: 60, height: 60)
                                                     .cornerRadius(30)
                                                     .overlay(
-                                                        Circle()
-                                                            .stroke(progressBarColor == colorOption ? Color.white : Color.clear, lineWidth: 3)
+                                                        Circle().stroke(progressBarColor == colorOption ? Color.white : Color.clear, lineWidth: 3)
                                                     )
                                             } else {
                                                 Circle()
                                                     .fill(colorOption.color)
                                                     .frame(width: 60, height: 60)
                                                     .overlay(
-                                                        Circle()
-                                                            .stroke(progressBarColor == colorOption ? Color.white : Color.clear, lineWidth: 3)
+                                                        Circle().stroke(progressBarColor == colorOption ? Color.white : Color.clear, lineWidth: 3)
                                                     )
                                             }
                                         }
@@ -138,25 +136,14 @@ struct SettingsView: View {
                             .padding(.vertical, 16)
                         }
 
-                        // Preview
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("Preview")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-
+                            Text("Preview").font(.caption).foregroundColor(.secondary)
                             ZStack(alignment: .leading) {
-                                Capsule()
-                                    .fill(Color.white.opacity(0.15))
-                                    .frame(height: 8)
-
+                                Capsule().fill(Color.white.opacity(0.15)).frame(height: 8)
                                 if progressBarColor == .rainbow {
-                                    RainbowProgressBar()
-                                        .frame(width: 300 * 0.65, height: 8)
-                                        .clipShape(Capsule())
+                                    RainbowProgressBar().frame(width: 300 * 0.65, height: 8).clipShape(Capsule())
                                 } else {
-                                    Capsule()
-                                        .fill(progressBarColor.color)
-                                        .frame(width: 300 * 0.65, height: 8)
+                                    Capsule().fill(progressBarColor.color).frame(width: 300 * 0.65, height: 8)
                                 }
                             }
                             .frame(width: 300, height: 8)
@@ -165,18 +152,17 @@ struct SettingsView: View {
                     }
                     .padding(.vertical, 8)
                 }
-                
-                Section(header: Text("Playback")) {
+
+                // Section: Playback
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Playback").font(.headline)
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Preferred Playback Speed")
-                            .font(.headline)
+                        Text("Preferred Playback Speed").font(.headline)
                         HStack(spacing: 16) {
                             Button(action: {
                                 preferredPlaybackRate = max(0.5, (preferredPlaybackRate - 0.25).rounded(toPlaces: 2))
                                 vm.objectWillChange.send()
-                            }) {
-                                Image(systemName: "minus.circle")
-                            }
+                            }) { Image(systemName: "minus.circle") }
                             .buttonStyle(.borderedProminent)
 
                             Text(String(format: "%.2fx", preferredPlaybackRate))
@@ -185,9 +171,7 @@ struct SettingsView: View {
                             Button(action: {
                                 preferredPlaybackRate = min(3.0, (preferredPlaybackRate + 0.25).rounded(toPlaces: 2))
                                 vm.objectWillChange.send()
-                            }) {
-                                Image(systemName: "plus.circle")
-                            }
+                            }) { Image(systemName: "plus.circle") }
                             .buttonStyle(.borderedProminent)
                         }
                         Text("Global default speed for new playback sessions. Adjust here or in the mini player; changes persist.")
@@ -195,35 +179,34 @@ struct SettingsView: View {
                             .foregroundColor(.secondary)
                     }
                 }
-                
-                Section(header: Text("User Account")) {
-                    Button(role: .destructive) {
-                        loginHost = vm.host
-                        loginApiKey = vm.apiKey
-                        showLoginSheet = true
-                    } label: {
-                        Text("Login")
-                    }
-                    .sheet(isPresented: $showLoginSheet) {
-                        LoginSheetView()
-                            .environmentObject(vm)
-                    }
-                    
-                    Button(role: .destructive) {
-                        vm.logout()
-                        vm.libraries = []
-                        vm.errorMessage = nil
-                        vm.isLoggedIn = false
-                        vm.refreshToken += 1
-                        config.selected = []
-                        UserDefaults.standard.set("[]", forKey: "recentSearches")
-                    } label: {
-                        Text("Logout")
+
+                // Section: User Account
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("User Account").font(.headline)
+                    HStack(spacing: 16) {
+                        Button(role: .destructive) {
+                            loginHost = vm.host
+                            loginApiKey = vm.apiKey
+                            showLoginSheet = true
+                        } label: { Text("Login") }
+                        .sheet(isPresented: $showLoginSheet) { LoginSheetView().environmentObject(vm) }
+
+                        Button(role: .destructive) {
+                            vm.logout()
+                            vm.libraries = []
+                            vm.errorMessage = nil
+                            vm.isLoggedIn = false
+                            vm.refreshToken += 1
+                            config.selected = []
+                            UserDefaults.standard.set("[]", forKey: "recentSearches")
+                        } label: { Text("Logout") }
                     }
                 }
             }
-            .navigationTitle("Settings")
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
         }
+        .navigationTitle("Settings")
     }
 }
 

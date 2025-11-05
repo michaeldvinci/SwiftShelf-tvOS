@@ -55,6 +55,7 @@ struct LibraryItem: Identifiable, Codable {
             let authorNameLF: String?
             let authorName: String?
             let seriesName: String?
+            let description: String?
 
             struct Author: Codable {
                 let name: String
@@ -104,7 +105,7 @@ struct LibraryItem: Identifiable, Codable {
         }
     }
     
-    struct Chapter: Identifiable, Codable {
+    struct Chapter: Identifiable, Codable, Equatable {
         let id: Int
         let start: Double
         let end: Double
@@ -148,4 +149,15 @@ struct UserMediaProgress: Codable {
     let lastUpdate: Double?
     let startedAt: Double?
     let finishedAt: Double?
+}
+
+// Extension to expose description text for UI use
+extension LibraryItem {
+    var descriptionText: String {
+        // Access description from media metadata if available
+        if let description = self.media?.metadata.description, !description.isEmpty {
+            return description
+        }
+        return ""
+    }
 }

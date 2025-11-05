@@ -14,12 +14,15 @@ struct CompactPlayerView: View {
     @State private var localRate: Float = 1.0
     @State private var cancellable: AnyCancellable?
     
+    @AppStorage("miniPlayerProgressScope") private var progressScopeRaw: String = "book"
+    private enum ProgressScope: String { case book, chapter }
+    private var progressScope: ProgressScope { ProgressScope(rawValue: progressScopeRaw) ?? .book }
+    
     var body: some View {
         if let currentItem = audioManager.currentItem {
             VStack(spacing: 0) {
-                // Player controls
+                // Top row: artwork + title/author + status on the left, but keep it compact
                 HStack(spacing: 12) {
-                    // Artwork
                     if let artwork = audioManager.coverArt?.0 {
                         artwork
                             .resizable()
@@ -33,129 +36,123 @@ struct CompactPlayerView: View {
                             .frame(width: 50, height: 50)
                             .cornerRadius(8)
                     }
-                    
-                    // Title and info
                     VStack(alignment: .leading, spacing: 2) {
                         Text(currentItem.title)
                             .font(.headline)
                             .lineLimit(1)
-                        
                         if let author = currentItem.authorNameLF ?? currentItem.authorName {
                             Text(author)
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                                 .lineLimit(1)
                         }
-                        
-                        // Show play status
-                        if !audioManager.hasAudioStream {
-                            Text("Loading...")
-                                .font(.caption2)
-                                .foregroundColor(.orange)
-                        } else if audioManager.isPlaying {
-                            Text("Playing")
-                                .font(.caption2)
-                                .foregroundColor(.green)
-                        } else {
-                            Text("Paused")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                        }
+                        Text(audioManager.hasAudioStream ? (audioManager.isPlaying ? "Playing" : "Paused") : "Loading...")
+                            .font(.caption2)
+                            .foregroundColor(audioManager.hasAudioStream ? (audioManager.isPlaying ? .green : .secondary) : .orange)
                     }
-                    
                     Spacer()
-                    
-                    // Show transport controls instead of opening full player
-                    if audioManager.hasAudioStream {
-                        // Time display
-                        VStack(spacing: 2) {
-                            Text(formatTime(audioManager.currentTime))
-                                .font(.caption2)
-                                .monospacedDigit()
-                                .foregroundColor(.secondary)
-                            Text(formatTime(audioManager.duration))
-                                .font(.caption2)
-                                .monospacedDigit()
-//                                .foregroundColor(.tertiary)
-                        }
-                    } else {
-                        // Show loading indicator while preparing
-                        ProgressView()
-                            .scaleEffect(0.8)
-                    }
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
 
-                // Progress bar
-                GeometryReader { geometry in
-                    let progress = audioManager.duration > 0 ? audioManager.currentTime / audioManager.duration : 0
-
-                    ZStack(alignment: .leading) {
-                        Rectangle()
-                            .fill(Color.gray.opacity(0.5))
-                            .frame(height: 3)
-
-                        Rectangle()
-                            .fill(Color.accentColor)
-                            .frame(width: geometry.size.width * CGFloat(progress), height: 3)
+                // Seek bar with timestamps on far left/right
+                VStack(spacing: 6) {
+                    HStack {
+                        Text(formatTime(progressScope == .chapter ? max(0, audioManager.currentTime - audioManager.currentChapterStart) : audioManager.currentTime))
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text(formatTime(progressScope == .chapter ? audioManager.currentChapterDuration : audioManager.duration))
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
                     }
+                    .padding(.horizontal, 16)
+
+                    Button(action: { progressScopeRaw = (progressScope == .book) ? ProgressScope.chapter.rawValue : ProgressScope.book.rawValue }) {
+                        Text(progressScope == .book ? "Book" : "Chapter")
+                            .font(.caption2)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.12)))
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 16)
+
+                    GeometryReader { geometry in
+                        // Compute timing values as constants to keep ViewBuilder returning a single View
+                        let totalDuration: Double = {
+                            if progressScope == .chapter && audioManager.currentChapterDuration > 0 {
+                                return audioManager.currentChapterDuration
+                            } else {
+                                return audioManager.duration
+                            }
+                        }()
+
+                        let elapsed: Double = {
+                            if progressScope == .chapter && audioManager.currentChapterDuration > 0 {
+                                return max(0, audioManager.currentTime - audioManager.currentChapterStart)
+                            } else {
+                                return audioManager.currentTime
+                            }
+                        }()
+
+                        let progress: Double = totalDuration > 0 ? min(max(elapsed / totalDuration, 0), 1) : 0
+
+                        ZStack(alignment: .leading) {
+                            Rectangle()
+                                .fill(Color.gray.opacity(0.5))
+                                .frame(height: 6)
+
+                            Rectangle()
+                                .fill(Color.accentColor)
+                                .frame(width: geometry.size.width * CGFloat(progress), height: 6)
+                        }
+                    }
+                    .frame(height: 6)
                 }
-                .frame(height: 3)
 
-                // Transport controls
+                // Centered transport + speed controls
                 HStack(spacing: 16) {
-                    // Previous Chapter
+                    Spacer()
+
                     Button(action: { audioManager.previousChapter() }) {
-                        Image(systemName: "backward.end.fill")
-                            .font(.system(size: 18, weight: .bold))
+                        Image(systemName: "backward.end.fill").font(.system(size: 18, weight: .bold))
                     }
+                    .frame(minWidth: 44, minHeight: 44)
                     .buttonStyle(.plain)
-                    .contentShape(Rectangle())
 
-                    // Rewind 15 seconds
                     Button(action: { audioManager.skip(-15) }) {
-                        Image(systemName: "gobackward.15")
-                            .font(.system(size: 18, weight: .bold))
+                        Image(systemName: "gobackward.15").font(.system(size: 18, weight: .bold))
                     }
+                    .frame(minWidth: 44, minHeight: 44)
                     .buttonStyle(.plain)
-                    .contentShape(Rectangle())
 
-                    // Play/Pause
                     Button(action: { audioManager.togglePlayPause() }) {
-                        Image(systemName: audioManager.isPlaying ? "pause.fill" : "play.fill")
-                            .font(.system(size: 22, weight: .bold))
+                        Image(systemName: audioManager.isPlaying ? "pause.fill" : "play.fill").font(.system(size: 22, weight: .bold))
                     }
+                    .frame(minWidth: 44, minHeight: 44)
                     .buttonStyle(.plain)
-                    .contentShape(Rectangle())
 
-                    // Forward 15 seconds
                     Button(action: { audioManager.skip(15) }) {
-                        Image(systemName: "goforward.15")
-                            .font(.system(size: 18, weight: .bold))
+                        Image(systemName: "goforward.15").font(.system(size: 18, weight: .bold))
                     }
+                    .frame(minWidth: 44, minHeight: 44)
                     .buttonStyle(.plain)
-                    .contentShape(Rectangle())
 
-                    // Next Chapter
                     Button(action: { audioManager.nextChapter() }) {
-                        Image(systemName: "forward.end.fill")
-                            .font(.system(size: 18, weight: .bold))
+                        Image(systemName: "forward.end.fill").font(.system(size: 18, weight: .bold))
                     }
+                    .frame(minWidth: 44, minHeight: 44)
                     .buttonStyle(.plain)
-                    .contentShape(Rectangle())
-                    
-                    Spacer(minLength: 8)
 
-                    // Speed controls: label and +/- buttons stepping by 0.1, clamped 1.0–2.5
+                    // Speed controls in center cluster
                     HStack(spacing: 8) {
                         Button(action: {
                             let newRate = max(1.0, audioManager.rate - 0.1)
                             audioManager.setRate(Float((Double(newRate) * 10).rounded() / 10))
                             localRate = audioManager.rate
-                        }) {
-                            Image(systemName: "minus.circle")
-                        }
+                        }) { Image(systemName: "minus.circle") }
+                        .frame(minWidth: 36, minHeight: 36)
                         .buttonStyle(.plain)
 
                         Text(String(format: "%.1fx", audioManager.rate))
@@ -166,19 +163,25 @@ struct CompactPlayerView: View {
                             let newRate = min(2.5, audioManager.rate + 0.1)
                             audioManager.setRate(Float((Double(newRate) * 10).rounded() / 10))
                             localRate = audioManager.rate
-                        }) {
-                            Image(systemName: "plus.circle")
-                        }
+                        }) { Image(systemName: "plus.circle") }
+                        .frame(minWidth: 36, minHeight: 36)
                         .buttonStyle(.plain)
                     }
+
+                    Spacer()
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
             }
-            .background(Color.black.opacity(0.3))
-            .onAppear {
-                localRate = audioManager.rate
-            }
+            .background(Color(.sRGB, red: 0.08, green: 0.08, blue: 0.1, opacity: 1.0))
+            .overlay(
+                Rectangle()
+                    .fill(Color.white.opacity(0.2))
+                    .frame(height: 1)
+                    .frame(maxHeight: .infinity, alignment: .top)
+            )
+            .shadow(color: Color.black.opacity(0.4), radius: 10, x: 0, y: -2)
+            .onAppear { localRate = audioManager.rate }
         }
     }
     

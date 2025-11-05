@@ -26,6 +26,9 @@ final class GlobalAudioManager: NSObject, ObservableObject {
     @Published var loadingStatus: String = "Ready"
     @Published var coverArt: (Image, UIImage)?
     
+    @Published var currentChapterStart: Double = 0
+    @Published var currentChapterDuration: Double = 0
+    
     private var playerViewModel: PlayerViewModel?
     private var cancellables = Set<AnyCancellable>()
     
@@ -162,6 +165,8 @@ final class GlobalAudioManager: NSObject, ObservableObject {
         currentTrackTitle = ""
         hasAudioStream = false
         pendingResumeSeconds = nil
+        currentChapterStart = 0
+        currentChapterDuration = 0
         print("[GlobalAudioManager] 🔄 State reset complete")
     }
     
@@ -221,6 +226,18 @@ final class GlobalAudioManager: NSObject, ObservableObject {
         playerVM.$loadingStatus
             .sink { [weak self] value in
                 self?.loadingStatus = value
+            }
+            .store(in: &cancellables)
+        
+        playerVM.$currentChapterStart
+            .sink { [weak self] value in
+                self?.currentChapterStart = value
+            }
+            .store(in: &cancellables)
+
+        playerVM.$currentChapterDuration
+            .sink { [weak self] value in
+                self?.currentChapterDuration = value
             }
             .store(in: &cancellables)
         

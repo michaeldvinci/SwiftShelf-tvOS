@@ -6,9 +6,6 @@
 //
 
 import SwiftUI
-#if canImport(WebKit)
-import WebKit
-#endif
 
 struct ContentView: View {
     @AppStorage("recentSearches") private var recentSearchesRaw: String = "[]"
@@ -42,71 +39,33 @@ struct ContentView: View {
     @FocusState private var focusedResultID: String?
 
     @State private var selectedMediaItem: LibraryItem? = nil
-    @State private var selectedMediaItemForPlayback: LibraryItem? = nil
-
-    @State private var showYouTubePlayer = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            Group {
-                if config.selected.isEmpty {
-                    connectionSelectionPane
-                } else {
-                    TabView(selection: $selectedTabIndex) {
-                        searchTabView
-                            .onAppear {
-                                searchFieldIsFocused = true
-                            }
-                            .tabItem {
-                                Image(systemName: "magnifyingglass")
-                            }
-                            .tag(-1)
-
-                        ForEach(Array(config.selected.enumerated()), id: \.element.id) { idx, lib in
-                            LibraryDetailView(library: lib)
-                                .environmentObject(vm)
-                                .environmentObject(config)
-                                .environmentObject(audioManager)
-                                .tabItem {
-                                    Text(lib.name)
-                                }
-                                .tag(idx)
-                        }
-
-                        // Refresh button as a tab item (appears before settings)
-                        Text("")
-                            .tabItem {
-                                Label {
-                                    Text("")
-                                } icon: {
-                                    Button {
-                                        vm.refreshToken += 1
-                                    } label: {
-                                        Image(systemName: "arrow.clockwise")
-                                    }
-                                }
-                            }
-                            .tag(-999)
-
-                        SettingsView()
-                            .environmentObject(vm)
-                            .environmentObject(config)
-                            .tabItem {
-                                Image(systemName: "gear")
-                            }
-                            .tag(config.selected.count)
-                    }
-                }
+        NavigationView {
+            if let selectedItem = selectedMediaItem {
+                ItemDetailsFullScreenView(
+                    item: selectedItem, 
+                    isPresented: Binding(
+                        get: { selectedMediaItem != nil },
+                        set: { if !$0 { selectedMediaItem = nil } }
+                    ),
+                    selectedTabIndex: $selectedTabIndex
+                )
+                .environmentObject(vm)
+                .environmentObject(audioManager)
+            } else if config.selected.isEmpty {
+                connectionSelectionPane
+            } else {
+                mainTabView
             }
-            
-            // Global compact player
-            if audioManager.currentItem != nil {
-                CompactPlayerView()
-                    .environmentObject(audioManager)
-                    .environmentObject(vm)
-                    .onAppear {
-                        print("[ContentView] 📱 Showing compact player for: \(audioManager.currentItem!.title)")
-                    }
+        }
+        .onMoveCommand { direction in
+            // Handle direction pad navigation if needed
+        }
+        .onExitCommand {
+            // Handle Menu button press - focus on tab bar or go back
+            if selectedMediaItem != nil {
+                selectedMediaItem = nil
             }
         }
         .sheet(isPresented: $showSelection) {
@@ -114,23 +73,6 @@ struct ContentView: View {
                 .environmentObject(vm)
                 .environmentObject(config)
         }
-        .sheet(item: $selectedMediaItem) { item in
-            // Use BookDetailsPopupView for tvOS integration with blurred popup
-            BookDetailsPopupView(item: item)
-                .environmentObject(vm)
-                .environmentObject(audioManager)
-        }
-        // Unify playback UI for search and library selections:
-        .sheet(item: $selectedMediaItemForPlayback) { item in
-            BookDetailsPopupView(item: item)
-                .environmentObject(vm)
-                .environmentObject(audioManager)
-        }
-        #if canImport(WebKit)
-        .sheet(isPresented: $showYouTubePlayer) {
-            YouTubePlayerView(videoID: "NflgXN2oekM")
-        }
-        #endif
         .onChange(of: scenePhase) { oldPhase, newPhase in
             if newPhase == .active {
                 Task {
@@ -146,6 +88,12 @@ struct ContentView: View {
             print("[ContentView] ContentView appeared")
             print("[ContentView] host: \(vm.host.isEmpty ? "empty" : "set"), apiKey: \(vm.apiKey.isEmpty ? "empty" : "set"), selected libraries: \(config.selected.count)")
             #endif
+            
+            // Focus on first library if we have libraries selected
+            if !config.selected.isEmpty {
+                selectedTabIndex = 0
+            }
+            
             if !vm.host.isEmpty && !vm.apiKey.isEmpty {
                 if !config.selected.isEmpty {
                     #if DEBUG
@@ -153,8 +101,7 @@ struct ContentView: View {
                     #endif
                     Task {
                         await vm.connect()
-                        // Fix first launch selection issue by ensuring data is loaded
-                        try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second delay
+                        try? await Task.sleep(nanoseconds: 1_000_000_000)
                         #if DEBUG
                         print("[ContentView] Connection complete")
                         #endif
@@ -163,37 +110,81 @@ struct ContentView: View {
             }
         }
         .onChange(of: vm.isLoggedIn) { oldValue, newValue in
-            // If user logs in and there are selected libraries, set tab focus to first library
             if !oldValue && newValue && !config.selected.isEmpty {
-                selectedTabIndex = 0
+                selectedTabIndex = 0 // Focus on first library
             }
         }
-        .onChange(of: config.selected) { _, newValue in
-            // If logged in and libraries become available, focus first library
+        .onChange(of: config.selected) { oldValue, newValue in
             if vm.isLoggedIn && !newValue.isEmpty {
-                selectedTabIndex = 0
+                selectedTabIndex = 0 // Focus on first library
             }
         }
     }
 
-    private var searchTabView: some View {
-        VStack(spacing: 16) {
-            TextField("Search", text: $searchText, onCommit: {
-                Task {
-                    await searchBooks()
-                    addRecentSearch(searchText)
-                }
-            })
-            .focused($searchFieldIsFocused)
-            .onSubmit {
-                if let firstSection = searchSections.first,
-                   let firstItem = firstSection.items.first {
-                    selectedSearchItemID = firstItem.id
-                    focusedResultID = firstItem.id
-                }
-                addRecentSearch(searchText)
+    private var mainTabView: some View {
+        TabView(selection: $selectedTabIndex) {
+            ForEach(Array(config.selected.enumerated()), id: \.element.id) { idx, lib in
+                LibraryDetailView(library: lib, selectedMediaItem: $selectedMediaItem)
+                    .environmentObject(vm)
+                    .environmentObject(config)
+                    .environmentObject(audioManager)
+                    .tabItem {
+                        // Tapping the active library title triggers refresh
+                        Button(action: {
+                            if selectedTabIndex == idx {
+                                vm.refreshToken += 1
+                            } else {
+                                selectedTabIndex = idx
+                            }
+                        }) {
+                            Text(lib.name)
+                        }
+                    }
+                    .tag(idx)
             }
-            .submitLabel(.search)
+
+            NowPlayingView()
+                .environmentObject(audioManager)
+                .environmentObject(vm)
+                .tabItem { Image(systemName: "play.circle") }
+                .tag(-998)
+
+            searchTabView
+                .onAppear { searchFieldIsFocused = true }
+                .tabItem { Image(systemName: "magnifyingglass") }
+                .tag(-1)
+
+            SettingsView()
+                .environmentObject(vm)
+                .environmentObject(config)
+                .tabItem { Image(systemName: "gear") }
+                .tag(config.selected.count)
+        }
+    }
+
+    private var searchTabView: some View {
+        VStack(spacing: 0) {
+            HStack {
+                TextField("Search books, narrators, series...", text: $searchText)
+                    .focused($searchFieldIsFocused)
+                    .submitLabel(.search)
+                    .onSubmit {
+                        Task {
+                            await searchBooks()
+                            addRecentSearch(searchText)
+                        }
+                    }
+
+                Button {
+                    Task {
+                        await searchBooks()
+                        addRecentSearch(searchText)
+                    }
+                } label: {
+                    Image(systemName: "magnifyingglass")
+                }
+                .disabled(searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
             .padding(10)
             .background(
                 RoundedRectangle(cornerRadius: 8)
@@ -238,8 +229,7 @@ struct ContentView: View {
                                 ForEach(section.items) { item in
                                     if section.title == "Books", let libItem = item.libraryItem {
                                         Button {
-                                            // Instead of any other action, unify playback UI by setting selectedMediaItemForPlayback
-                                            selectedMediaItemForPlayback = libItem
+                                            selectedMediaItem = libItem
                                         } label: {
                                             HStack(spacing: 12) {
                                                 if let cachedImage = coverCache[item.id] {
@@ -302,9 +292,6 @@ struct ContentView: View {
                                             selectedSearchItemID = item.id
                                             focusedResultID = item.id
                                         }
-                                        .onSubmit {
-                                        }
-                                        .submitLabel(.done)
                                         .accessibilityRespondsToUserInteraction(true)
                                     }
                                 }
@@ -542,13 +529,601 @@ struct ContentView: View {
         let libraryItem: LibraryItem?
     }
 
+    @ViewBuilder
+    private func NowPlayingView() -> some View {
+        ZStack {
+            // Blurry background
+            if let current = audioManager.currentItem {
+                // Use cover art as blurred background
+                if let coverArt = audioManager.coverArt?.0 {
+                    coverArt
+                        .resizable()
+                        .scaledToFill()
+                        .blur(radius: 50)
+                        .scaleEffect(1.2)
+                        .ignoresSafeArea()
+                } else if let image = coverCache[current.id] {
+                    image
+                        .resizable()
+                        .scaledToFill()
+                        .blur(radius: 50)
+                        .scaleEffect(1.2)
+                        .ignoresSafeArea()
+                } else {
+                    // Fallback gradient background
+                    LinearGradient(
+                        colors: [.black, .gray.opacity(0.8), .black],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                    .ignoresSafeArea()
+                }
+            } else {
+                // Default background when nothing is playing
+                LinearGradient(
+                    colors: [.black, .gray.opacity(0.3)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .ignoresSafeArea()
+            }
+            
+            // Dark overlay to ensure text readability
+            Color.black.opacity(0.4)
+                .ignoresSafeArea()
+            
+            // Main content
+            if let current = audioManager.currentItem {
+                let chapters = current.chapters
+                @State var pageIndex: Int = 0
+                
+                VStack(spacing: 40) {
+                    Spacer()
+                    
+                    HStack(alignment: .center, spacing: 80) {
+                        // Left side: Large cover art
+                        VStack {
+                            if let coverArt = audioManager.coverArt?.0 {
+                                coverArt
+                                    .resizable()
+                                    .scaledToFit()
+                                    .frame(maxWidth: 500, maxHeight: 500)
+                                    .cornerRadius(20)
+                                    .shadow(radius: 20)
+                                    .focusable()
+                            } else if let image = coverCache[current.id] {
+                                image
+                                    .resizable()
+                                    .scaledToFit()
+                                    .frame(maxWidth: 500, maxHeight: 500)
+                                    .cornerRadius(20)
+                                    .shadow(radius: 20)
+                                    .focusable()
+                            } else {
+                                Rectangle()
+                                    .fill(Color.gray.opacity(0.3))
+                                    .frame(width: 500, height: 500)
+                                    .cornerRadius(20)
+                                    .shadow(radius: 20)
+                                    .task { 
+                                        await loadCover(for: current) 
+                                    }
+                            }
+                        }
+                        
+                        // Right side: Metadata and controls
+                        VStack(alignment: .leading, spacing: 24) {
+                            // Title
+                            Text(current.title)
+                                .font(.largeTitle)
+                                .fontWeight(.bold)
+                                .foregroundColor(.white)
+                                .lineLimit(2)
+                                .multilineTextAlignment(.leading)
+                            
+                            // Author
+                            Text(current.authorNameLF ?? current.authorName ?? "Unknown Author")
+                                .font(.title2)
+                                .foregroundColor(.white.opacity(0.8))
+                                .lineLimit(1)
+                            
+                            // Current chapter (if available)
+                            if !chapters.isEmpty {
+                                let currentChapter = chapters.first { chapter in
+                                    audioManager.currentTime >= chapter.start && audioManager.currentTime <= chapter.end
+                                } ?? chapters.first
+                                
+                                if let chapter = currentChapter {
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        Text("Chapter \(chapters.firstIndex(of: chapter).map { $0 + 1 } ?? 1)")
+                                            .font(.caption)
+                                            .foregroundColor(.white.opacity(0.6))
+                                            .textCase(.uppercase)
+                                        
+                                        Text(chapter.title)
+                                            .font(.title3)
+                                            .foregroundColor(.white.opacity(0.9))
+                                            .lineLimit(2)
+                                    }
+                                    
+                                    // Chapter progress
+                                    ChapterSeekBar(
+                                        currentTime: max(0, audioManager.currentTime - chapter.start),
+                                        duration: max(0, chapter.end - chapter.start),
+                                        onSeek: { seekTime in
+                                            audioManager.seek(to: chapter.start + seekTime)
+                                        }
+                                    )
+                                    .padding(.top, 16)
+                                }
+                            } else {
+                                // Overall progress if no chapters
+                                if let duration = current.duration {
+                                    ChapterSeekBar(
+                                        currentTime: audioManager.currentTime,
+                                        duration: duration,
+                                        onSeek: { seekTime in
+                                            audioManager.seek(to: seekTime)
+                                        }
+                                    )
+                                    .padding(.top, 16)
+                                }
+                            }
+                            
+                            // Playback controls
+                            HStack(spacing: 40) {
+                                Button {
+                                    let newTime = max(0, audioManager.currentTime - 30)
+                                    audioManager.seek(to: newTime)
+                                } label: {
+                                    Image(systemName: "gobackward.30")
+                                        .font(.system(size: 32))
+                                        .foregroundColor(.white)
+                                }
+                                .focusable()
+                                
+                                Button {
+                                    if audioManager.isPlaying {
+                                        audioManager.pause()
+                                    } else {
+                                        audioManager.play()
+                                    }
+                                } label: {
+                                    Image(systemName: audioManager.isPlaying ? "pause.fill" : "play.fill")
+                                        .font(.system(size: 40))
+                                        .foregroundColor(.white)
+                                }
+                                .focusable()
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.large)
+                                
+                                Button {
+                                    if let duration = current.duration {
+                                        let newTime = min(duration, audioManager.currentTime + 30)
+                                        audioManager.seek(to: newTime)
+                                    }
+                                } label: {
+                                    Image(systemName: "goforward.30")
+                                        .font(.system(size: 32))
+                                        .foregroundColor(.white)
+                                }
+                                .focusable()
+                            }
+                            .padding(.top, 20)
+                        }
+                        .frame(maxWidth: 600)
+                    }
+                    
+                    Spacer()
+                    
+                    // Chapter navigation (if chapters exist)
+                    if !chapters.isEmpty && chapters.count > 1 {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 16) {
+                                ForEach(Array(chapters.enumerated()), id: \.offset) { index, chapter in
+                                    let isCurrentChapter = audioManager.currentTime >= chapter.start && audioManager.currentTime <= chapter.end
+                                    
+                                    Button {
+                                        audioManager.seek(to: chapter.start)
+                                    } label: {
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            Text("Chapter \(index + 1)")
+                                                .font(.caption2)
+                                                .foregroundColor(isCurrentChapter ? .accentColor : .white.opacity(0.6))
+                                                .textCase(.uppercase)
+                                            
+                                            Text(chapter.title)
+                                                .font(.caption)
+                                                .foregroundColor(isCurrentChapter ? .white : .white.opacity(0.8))
+                                                .lineLimit(1)
+                                                .frame(maxWidth: 200, alignment: .leading)
+                                        }
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 8)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 8)
+                                                .fill(isCurrentChapter ? Color.accentColor.opacity(0.2) : Color.clear)
+                                        )
+                                    }
+                                    .buttonStyle(.plain)
+                                    .focusable()
+                                }
+                            }
+                            .padding(.horizontal, 40)
+                        }
+                        .frame(height: 60)
+                    }
+                    
+                    Spacer()
+                }
+                .padding(40)
+                .task {
+                    // Load cover into cache if not already loaded
+                    if coverCache[current.id] == nil {
+                        await loadCover(for: current)
+                    }
+                }
+                
+            } else {
+                // Nothing playing state
+                VStack(spacing: 32) {
+                    Image(systemName: "music.note")
+                        .font(.system(size: 100))
+                        .foregroundColor(.white.opacity(0.6))
+                    
+                    VStack(spacing: 8) {
+                        Text("Nothing Playing")
+                            .font(.largeTitle)
+                            .fontWeight(.bold)
+                            .foregroundColor(.white)
+                        
+                        Text("Select an audiobook to start listening")
+                            .font(.title3)
+                            .foregroundColor(.white.opacity(0.7))
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: - tvOS Chapter Progress Display (Non-interactive)
+    struct ChapterSeekBar: View {
+        let currentTime: Double
+        let duration: Double
+        let onSeek: (Double) -> Void
+        
+        var body: some View {
+            VStack(spacing: 12) {
+                // Use ProgressView for tvOS since Slider is not available
+                ProgressView(value: duration > 0 ? max(0, min(1, currentTime / duration)) : 0)
+                    .tint(.white)
+                
+                // Time labels
+                HStack {
+                    Text(timeString(max(0, currentTime)))
+                        .font(.caption)
+                        .monospacedDigit()
+                    Spacer()
+                    Text(timeString(duration))
+                        .font(.caption)
+                        .monospacedDigit()
+                }
+                
+                // Add seek controls using buttons for tvOS
+                HStack(spacing: 30) {
+                    Button {
+                        let newTime = max(0, currentTime - 30) // Skip back 30 seconds
+                        onSeek(newTime)
+                    } label: {
+                        Image(systemName: "gobackward.30")
+                            .font(.title2)
+                    }
+                    .focusable()
+                    
+                    Spacer()
+                    
+                    Button {
+                        let newTime = min(duration, currentTime + 30) // Skip forward 30 seconds
+                        onSeek(newTime)
+                    } label: {
+                        Image(systemName: "goforward.30")
+                            .font(.title2)
+                    }
+                    .focusable()
+                }
+            }
+        }
+        
+        private func timeString(_ seconds: Double) -> String {
+            let total = Int(seconds.rounded())
+            let h = total / 3600
+            let m = (total % 3600) / 60
+            let s = total % 60
+            if h > 0 { return String(format: "%d:%02d:%02d", h, m, s) }
+            return String(format: "%d:%02d", m, s)
+        }
+    }
+
+    // MARK: - Full-screen Item Details View
+    struct ItemDetailsFullScreenView: View {
+        let item: LibraryItem
+        @Binding var isPresented: Bool
+        @EnvironmentObject var vm: ViewModel
+        @EnvironmentObject var audioManager: GlobalAudioManager
+        @State private var coverImage: Image? = nil
+        @State private var showFullDescription = false
+        @State private var fullItem: LibraryItem? = nil
+
+        // Focus management for tvOS navigation
+        @FocusState private var closeButtonFocused: Bool
+        @FocusState private var playButtonFocused: Bool
+        @FocusState private var descriptionButtonFocused: Bool
+        @FocusState private var focusedChapterID: String?
+
+        // Access to parent's selectedTabIndex
+        @Binding var selectedTabIndex: Int
+
+        // Use fullItem if loaded, otherwise fallback to item
+        private var displayItem: LibraryItem {
+            fullItem ?? item
+        }
+
+        var body: some View {
+            ZStack {
+                // Debug: Log chapter count
+                let _ = {
+                    #if DEBUG
+                    print("[ItemDetailsFullScreenView] Item: \(displayItem.title), Chapters count: \(displayItem.chapters.count)")
+                    if !displayItem.chapters.isEmpty {
+                        print("[ItemDetailsFullScreenView] First chapter: \(displayItem.chapters[0].title)")
+                    }
+                    #endif
+                }()
+
+                // Blurry background using cover art (matching Now Playing style)
+                if let coverImage {
+                    coverImage
+                        .resizable()
+                        .scaledToFill()
+                        .blur(radius: 50)
+                        .scaleEffect(1.2)
+                        .ignoresSafeArea()
+                } else {
+                    // Fallback gradient background
+                    LinearGradient(
+                        colors: [.black, .gray.opacity(0.8), .black],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                    .ignoresSafeArea()
+                }
+                
+                // Dark overlay to ensure text readability
+                Color.black.opacity(0.4)
+                    .ignoresSafeArea()
+                
+                // Main content - properly centered
+                HStack(alignment: .center, spacing: 80) {
+                    // Left side: XL cover art
+                    VStack {
+                        if let coverImage {
+                            coverImage
+                                .resizable()
+                                .scaledToFit()
+                                .frame(maxWidth: 600, maxHeight: 700)
+                                .cornerRadius(20)
+                                .shadow(radius: 20)
+                        } else {
+                            Rectangle()
+                                .fill(Color.gray.opacity(0.3))
+                                .frame(width: 600, height: 700)
+                                .cornerRadius(20)
+                                .shadow(radius: 20)
+                                .task { await loadCover() }
+                        }
+                    }
+                    
+                    // Right side: metadata and actions
+                    VStack {
+                        // Fixed spacer to push content to match cover art center
+                        Spacer()
+
+                        VStack(alignment: .leading, spacing: 16) {
+                            titleSection
+                            seriesSection
+                            authorSection
+                            descriptionSection
+                            playButtonSection
+                            chapterListSection
+                        }
+
+                        Spacer()
+                    }
+                    .frame(maxWidth: 650)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(.horizontal, 60)
+            }
+            .task {
+                // Load full item details with chapters
+                if let details = await vm.fetchLibraryItemDetails(itemId: item.id) {
+                    fullItem = details
+                }
+            }
+            .onAppear {
+                // Set initial focus to close button after a slight delay
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    closeButtonFocused = true
+                }
+            }
+        }
+        
+        // MARK: - Computed View Sections
+        
+        @ViewBuilder
+        private var closeButtonSection: some View {
+            HStack {
+                Spacer()
+                Button("Close") { 
+                    isPresented = false 
+                }
+                .buttonStyle(.bordered)
+                .focused($closeButtonFocused)
+            }
+        }
+        
+        @ViewBuilder
+        private var titleSection: some View {
+            Text(displayItem.title)
+                .font(.title2)
+                .fontWeight(.bold)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+                .foregroundColor(.white)
+        }
+
+        @ViewBuilder
+        private var seriesSection: some View {
+            EmptyView()
+        }
+
+        @ViewBuilder
+        private var authorSection: some View {
+            EmptyView()
+        }
+
+        @ViewBuilder
+        private var descriptionSection: some View {
+            if !displayItem.descriptionText.isEmpty {
+                Button {
+                    showFullDescription = true
+                } label: {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(displayItem.descriptionText)
+                            .font(.subheadline)
+                            .foregroundColor(descriptionButtonFocused ? .black : .white.opacity(0.8))
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+
+                        HStack {
+                            Text("More")
+                                .font(.caption)
+                                .foregroundColor(descriptionButtonFocused ? .black : .accentColor)
+                            Spacer()
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+                .focused($descriptionButtonFocused)
+                .alert(displayItem.title, isPresented: $showFullDescription) {
+                    Button("Close", role: .cancel) {
+                        showFullDescription = false
+                    }
+                } message: {
+                    Text(displayItem.descriptionText)
+                }
+            }
+        }
+        
+        @ViewBuilder
+        private var playButtonSection: some View {
+            Button {
+                Task {
+                    // Load the item into the audio manager (use fullItem if available for chapters)
+                    await audioManager.loadItem(displayItem, appVM: vm)
+                    // Start playback
+                    audioManager.play()
+                    // Switch to Now Playing tab (-998)
+                    selectedTabIndex = -998
+                    // Close this overlay
+                    isPresented = false
+                }
+            } label: {
+                Label("Play", systemImage: "play.fill")
+                    .font(.title3)
+                    .fontWeight(.bold)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.regular)
+            .focused($playButtonFocused)
+        }
+
+        @ViewBuilder
+        private var chapterListSection: some View {
+            if !displayItem.chapters.isEmpty {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Chapters")
+                        .font(.headline)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.white)
+                        .padding(.top, 8)
+
+                    List {
+                        ForEach(Array(displayItem.chapters.enumerated()), id: \.offset) { index, chapter in
+                            Button {
+                                Task {
+                                    // Load the item if not already loaded
+                                    if audioManager.currentItem?.id != displayItem.id {
+                                        await audioManager.loadItem(displayItem, appVM: vm)
+                                    }
+                                    // Seek to chapter start
+                                    audioManager.seek(to: chapter.start)
+                                    // Start playback
+                                    audioManager.play()
+                                    // Switch to Now Playing tab
+                                    selectedTabIndex = -998
+                                    // Close overlay
+                                    isPresented = false
+                                }
+                            } label: {
+                                HStack {
+                                    Text(chapter.title)
+                                        .font(.subheadline)
+                                        .lineLimit(1)
+                                        .multilineTextAlignment(.leading)
+
+                                    Spacer()
+
+                                    Text(durationString(max(0, chapter.end - chapter.start)))
+                                        .font(.caption)
+                                        .monospacedDigit()
+                                }
+                            }
+                            .listRowBackground(Color.white.opacity(0.1))
+                        }
+                    }
+                    .listStyle(.plain)
+                    .frame(maxHeight: 300)
+//                    .scrollContentBackground(.hidden)
+                }
+            }
+        }
+        
+        private func loadCover() async {
+            if let tuple = await vm.loadCover(for: item) {
+                coverImage = tuple.0
+            }
+        }
+        
+        private func durationString(_ seconds: Double) -> String {
+            let total = Int(seconds.rounded())
+            let h = total / 3600
+            let m = (total % 3600) / 60
+            let s = total % 60
+            if h > 0 { return String(format: "%d:%02d:%02d", h, m, s) }
+            return String(format: "%d:%02d", m, s)
+        }
+    }
+
     #if DEBUG
     private struct DevConfig: Codable {
         let host: String
         let apiKey: String
     }
     #endif
-}
 
-// YouTubePlayerView moved to separate file YouTubePlayerView.swift
+}
 
