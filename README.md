@@ -22,16 +22,16 @@ Tear it apart, and leave some comments in the Issues tab!
 ### Library Browsing
 - **Recent & Continue Listening Carousels**
   Browse your most recently added audiobooks and quickly jump back into in-progress titles. Each carousel is focus-aware and shows cover artwork, author, and duration with playback progress overlays.
-  ![Library view 1](_res/library-view-1.png)
+  ![Library view 1](_res/library-view.png)
 
 - **Search with Smart Shortcuts**
   Query your Audiobookshelf library with the same semantics as the web client. Results are grouped by books, narrators, and series, and recent search terms stay pinned for one-click access.
-  ![Search](_res/search.png)
+  ![Search](_res/search-1.png)
 
 ### Item Details & Playback
 - **Full-Screen Item Detail View**
   Selecting a title opens a polished full-screen view with cover artwork, author, description, and a chapter list. Navigate directly to any chapter or start playback with the prominent play button.
-  ![Item info view](_res/item-info.png)
+  ![Item info view](_res/item-info-1.png)
 
 - **Chapter Navigation**
   Browse and select chapters directly from the detail view. Each chapter shows its title and duration, with visual feedback for the currently playing chapter. Jump to any chapter instantly while maintaining playback state.
@@ -61,7 +61,7 @@ Tear it apart, and leave some comments in the Issues tab!
 ### Customization
 - **Customizable Experience**
   Tune how many items each library fetches, pick the carousel progress-bar color (including rainbow), and set a preferred default playback speed. All settings persist and trigger live refreshes.
-  ![Settings](_res/settings.png)
+  ![Settings](_res/settings-1.png)
 
 - **Authenticated Cover Fetching**
   Cover images are fetched securely from the Audiobookshelf `/cover` endpoint with your credentials and cached in-memory for smooth, fast browsing.
