@@ -248,10 +248,14 @@ final class PlayerViewModel: NSObject, ObservableObject {
     @Published var currentTrackTitle: String = ""
     @Published var hasAudioStream: Bool = true // New flag to indicate if audio stream is available
     @Published var loadingStatus: String = "Initializing..."
+    
+    @Published var currentChapterStart: Double = 0
+    @Published var currentChapterDuration: Double = 0
 
     // Logging / observer tokens
     private var statusObservations: [NSKeyValueObservation] = []
     private var perItemNotificationTokens: [NSObjectProtocol] = []
+    private var playerItemChangeObservation: NSKeyValueObservation?  // Added for currentItem changes
 
     let item: LibraryItem
     let appVM: ViewModel
@@ -325,9 +329,32 @@ final class PlayerViewModel: NSObject, ObservableObject {
                     self.player = queuePlayer
                     self.playlistItems = playerItems
 
+                    // Add KVO for currentItem changes to update UI and re-apply rate
+                    self.playerItemChangeObservation = queuePlayer.observe(\AVQueuePlayer.currentItem, options: [.new]) { [weak self] _, _ in
+                        guard let self else { return }
+                        DispatchQueue.main.async {
+                            if let currentItem = queuePlayer.currentItem,
+                               let index = self.playlistItems.firstIndex(of: currentItem) {
+                                self.currentTrackIndex = index
+                                self.currentTrackTitle = self.playlist[safe: index]?.title ?? "Track \(index + 1)"
+                                let idx = self.currentTrackIndex
+                                let start = self.playlist.prefix(idx).reduce(0.0) { $0 + ($1.duration ?? 0) }
+                                let dur = self.playlist[safe: idx]?.duration ?? 0
+                                self.currentChapterStart = start
+                                self.currentChapterDuration = dur
+                            }
+                            if self.isPlaying {
+                                queuePlayer.rate = self.rate
+                            }
+                            self.updateNowPlaying()
+                        }
+                    }
+
                     await MainActor.run {
                         self.duration = totalDuration
                         self.currentTrackTitle = playlist.first?.title ?? "Track 1"
+                        self.currentChapterStart = 0
+                        self.currentChapterDuration = self.playlist.first?.duration ?? 0
                         self.hasAudioStream = true
                         self.loadingStatus = "Ready to play!"
                     }
@@ -368,6 +395,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
                     await MainActor.run {
                         self.duration = audioFile.duration ?? 0
                         self.currentTrackTitle = item.title
+                        self.currentChapterStart = 0
+                        self.currentChapterDuration = audioFile.duration ?? 0
                         self.hasAudioStream = true
                         self.loadingStatus = "Ready to play!"
                     }
@@ -427,14 +456,18 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
         // Invalidate KVO observations
         statusObservations.removeAll()
+        playerItemChangeObservation = nil
         
         player = nil
         cancelSleepTimer()
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
-        MPRemoteCommandCenter.shared().playCommand.removeTarget(nil)
-        MPRemoteCommandCenter.shared().pauseCommand.removeTarget(nil)
-        MPRemoteCommandCenter.shared().skipBackwardCommand.removeTarget(nil)
-        MPRemoteCommandCenter.shared().skipForwardCommand.removeTarget(nil)
+        
+        // Properly cleanup remote command targets
+        let cmd = MPRemoteCommandCenter.shared()
+        cmd.playCommand.removeTarget(nil)
+        cmd.pauseCommand.removeTarget(nil)
+        cmd.skipBackwardCommand.removeTarget(nil)
+        cmd.skipForwardCommand.removeTarget(nil)
     }
 
     func setupTrackEndObserver() {
@@ -443,16 +476,37 @@ final class PlayerViewModel: NSObject, ObservableObject {
         endObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemDidPlayToEndTime,
             object: nil,
-            queue: OperationQueue.main
-        ) { [weak self] notification in
+            queue: .main
+        ) { [weak self] _ in
             guard let self else { return }
-            // AVQueuePlayer automatically advances, we just need to update our UI
-            if let currentItem = self.player?.currentItem,
+            guard let queue = self.player as? AVQueuePlayer else { return }
+
+            // Ensure the queue advances if it didn't automatically
+            if queue.items().isEmpty == false {
+                queue.advanceToNextItem()
+            }
+
+            // Update index/title based on new current item
+            if let currentItem = queue.currentItem,
                let index = self.playlistItems.firstIndex(of: currentItem) {
                 self.currentTrackIndex = index
                 self.currentTrackTitle = self.playlist[safe: index]?.title ?? "Track \(index + 1)"
-                self.updateNowPlaying()
+                let idx = self.currentTrackIndex
+                let start = self.playlist.prefix(idx).reduce(0.0) { $0 + ($1.duration ?? 0) }
+                let dur = self.playlist[safe: idx]?.duration ?? 0
+                self.currentChapterStart = start
+                self.currentChapterDuration = dur
+            } else {
+                // Reached end of queue
+                self.isPlaying = false
             }
+
+            // Re-apply rate if we should be playing
+            if self.isPlaying {
+                queue.rate = self.rate
+            }
+
+            self.updateNowPlaying()
         }
     }
 
@@ -486,6 +540,11 @@ final class PlayerViewModel: NSObject, ObservableObject {
                 currentTrackIndex = index
                 currentTrackTitle = playlist[safe: index]?.title ?? "Track \(index + 1)"
                 currentTime = 0
+                let idx = currentTrackIndex
+                let start = playlist.prefix(idx).reduce(0.0) { $0 + ($1.duration ?? 0) }
+                let dur = playlist[safe: idx]?.duration ?? 0
+                currentChapterStart = start
+                currentChapterDuration = dur
                 if isPlaying { queue.rate = rate }
                 updateNowPlaying()
             } else {
@@ -509,6 +568,11 @@ final class PlayerViewModel: NSObject, ObservableObject {
                 if currentTime > 3 {
                     // Restart current track
                     seek(to: 0)
+                    let idx = index
+                    let start = playlist.prefix(idx).reduce(0.0) { $0 + ($1.duration ?? 0) }
+                    let dur = playlist[safe: idx]?.duration ?? 0
+                    currentChapterStart = start
+                    currentChapterDuration = dur
                     return
                 }
                 // Go to previous track if available
@@ -526,11 +590,21 @@ final class PlayerViewModel: NSObject, ObservableObject {
                     currentTrackIndex = index - 1
                     currentTrackTitle = playlist[safe: currentTrackIndex]?.title ?? "Track \(currentTrackIndex + 1)"
                     currentTime = 0
+                    let idx = currentTrackIndex
+                    let start = playlist.prefix(idx).reduce(0.0) { $0 + ($1.duration ?? 0) }
+                    let dur = playlist[safe: idx]?.duration ?? 0
+                    currentChapterStart = start
+                    currentChapterDuration = dur
                     if isPlaying { newQueue.play(); newQueue.rate = rate }
                     updateNowPlaying()
                 } else {
                     // At the start of the queue — just restart current
                     seek(to: 0)
+                    let idx = index
+                    let start = playlist.prefix(idx).reduce(0.0) { $0 + ($1.duration ?? 0) }
+                    let dur = playlist[safe: idx]?.duration ?? 0
+                    currentChapterStart = start
+                    currentChapterDuration = dur
                 }
             }
         } else {
@@ -584,6 +658,13 @@ final class PlayerViewModel: NSObject, ObservableObject {
     func setupRemoteCommands() {
         AppLogger.shared.log("PlayerVM", "setupRemoteCommands")
         let cmd = MPRemoteCommandCenter.shared()
+        
+        // Remove existing targets first to prevent duplicates
+        cmd.playCommand.removeTarget(nil)
+        cmd.pauseCommand.removeTarget(nil)
+        cmd.skipBackwardCommand.removeTarget(nil)
+        cmd.skipForwardCommand.removeTarget(nil)
+        
         cmd.playCommand.isEnabled = true
         cmd.playCommand.addTarget { [weak self] _ in self?.play(); return .success }
         cmd.pauseCommand.isEnabled = true
@@ -973,6 +1054,9 @@ struct GlobalPlayerView: UIViewControllerRepresentable {
         controller.showsPlaybackControls = true
         controller.allowsPictureInPicturePlayback = false
         controller.view.backgroundColor = .black
+        
+        // Ensure proper view hierarchy setup
+        controller.view.translatesAutoresizingMaskIntoConstraints = false
 
         print("[GlobalPlayerView] Creating player view controller")
         if artwork != nil {
@@ -981,15 +1065,24 @@ struct GlobalPlayerView: UIViewControllerRepresentable {
             print("[GlobalPlayerView] ❌ No artwork")
         }
 
-        configureMetadata(for: controller)
+        // Defer metadata configuration to avoid early view hierarchy issues
+        DispatchQueue.main.async {
+            self.configureMetadata(for: controller)
+        }
+        
         return controller
     }
 
     func updateUIViewController(_ uiViewController: AVPlayerViewController, context: Context) {
-        if uiViewController.player != player {
+        // Only update if actually different to avoid unnecessary updates
+        if uiViewController.player !== player {
             uiViewController.player = player
+            
+            // Defer metadata configuration to avoid view hierarchy issues
+            DispatchQueue.main.async {
+                self.configureMetadata(for: uiViewController)
+            }
         }
-        configureMetadata(for: uiViewController)
     }
 
     private func configureMetadata(for controller: AVPlayerViewController) {

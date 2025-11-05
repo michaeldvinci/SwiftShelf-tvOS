@@ -72,88 +72,90 @@ struct LibraryDetailView: View {
     @State private var progressPercent: [String: Double] = [:] // 0.0...1.0
     @State private var hasLoadedOnce = false
 
-    // Restore state variables to manage in-app media player presentation
-    @State private var selectedItem: LibraryItem? = nil
+    // Binding to parent's selectedMediaItem instead of local selectedItem
+    @Binding var selectedMediaItem: LibraryItem?
 
     private let thumbSize: CGFloat = 225
+
+    // Add initializer to accept the binding
+    init(library: SelectedLibrary, selectedMediaItem: Binding<LibraryItem?> = .constant(nil)) {
+        self.library = library
+        self._selectedMediaItem = selectedMediaItem
+    }
 
     // Unified audio-player UI for all playback sources: selection always sets selectedItem and presents MediaPlayerView fullScreenCover.
     // No system alert or external URL opening for missing audio streams; MediaPlayerView handles audio availability UI.
     // Unified player matches AVPlayerViewController style, showing artwork above system controls.
 
     var body: some View {
-        VStack(spacing: 40) {
+        VStack(spacing: 0) {
+            // Non-scrolling top separator to clearly delineate nav bar area
+            Color.clear.frame(height: 0)
 
-            Divider()
-
+            // Scrollable content only inside this ScrollView
             ScrollView(.vertical, showsIndicators: true) {
-                VStack(spacing: 32) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Recent")
-                            .font(.headline)
-                            .padding(.horizontal)
+                VStack(spacing: 40) {
+                    Divider()
 
-                        if isLoadingItems {
-                            ProgressView()
+                    VStack(spacing: 32) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Recent")
+                                .font(.headline)
                                 .padding(.horizontal)
-                        } else if items.isEmpty {
-                            Text("No recent items").foregroundColor(.secondary).padding(.horizontal)
-                        } else {
-                            LibraryCarouselView(
-                                items: items,
-                                coverImages: $coverImages,
-                                progressPercent: $progressPercent,
-                                loadCover: { await vm.loadCover(for: $0) },
-                                thumbSize: thumbSize,
-                                onSelect: { item in
-                                    selectedItem = item
-                                }
-                            )
-                            .environmentObject(vm)
-                            .frame(height: 350)
+
+                            if isLoadingItems {
+                                ProgressView()
+                                    .padding(.horizontal)
+                            } else if items.isEmpty {
+                                Text("No recent items").foregroundColor(.secondary).padding(.horizontal)
+                            } else {
+                                LibraryCarouselView(
+                                    items: items,
+                                    coverImages: $coverImages,
+                                    progressPercent: $progressPercent,
+                                    loadCover: { await vm.loadCover(for: $0) },
+                                    thumbSize: thumbSize,
+                                    onSelect: { item in
+                                        selectedMediaItem = item
+                                    }
+                                )
+                                .environmentObject(vm)
+                                .frame(height: 350)
+                            }
+                        }
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Continue")
+                                .font(.headline)
+                                .padding(.horizontal)
+
+                            if isLoadingUnfinished {
+                                ProgressView()
+                                    .padding(.horizontal)
+                            } else if unfinished.isEmpty {
+                                Text("No in-progress items")
+                                    .foregroundColor(.secondary)
+                                    .padding(.horizontal)
+                            } else {
+                                LibraryCarouselView(
+                                    items: unfinished,
+                                    coverImages: $coverImages,
+                                    progressPercent: $progressPercent,
+                                    loadCover: { await vm.loadCover(for: $0) },
+                                    thumbSize: thumbSize,
+                                    onSelect: { item in
+                                        selectedMediaItem = item
+                                    }
+                                )
+                                .environmentObject(vm)
+                                .frame(height: 350)
+                            }
                         }
                     }
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Continue")
-                            .font(.headline)
-                            .padding(.horizontal)
-
-                        if isLoadingUnfinished {
-                            ProgressView()
-                                .padding(.horizontal)
-                        } else if unfinished.isEmpty {
-                            Text("No in-progress items")
-                                .foregroundColor(.secondary)
-                                .padding(.horizontal)
-                        } else {
-                            LibraryCarouselView(
-                                items: unfinished,
-                                coverImages: $coverImages,
-                                progressPercent: $progressPercent,
-                                loadCover: { await vm.loadCover(for: $0) },
-                                thumbSize: thumbSize,
-                                onSelect: { item in
-                                    selectedItem = item
-                                }
-                            )
-                            .environmentObject(vm)
-                            .frame(height: 350)
-                        }
-                    }
+                    .padding(.vertical, 8)
                 }
-                .padding(.vertical, 8)
             }
 
-            Spacer()
-        }
-        .navigationTitle("")
-        .sheet(item: $selectedItem, onDismiss: {
-            selectedItem = nil
-        }) { item in
-            // Present unified BookDetailsPopupView with Apple-style blurred background
-            BookDetailsPopupView(item: item)
-                .environmentObject(vm)
-                .environmentObject(audioManager)
+            Spacer(minLength: 0)
         }
         .onAppear {
             if !hasLoadedOnce {
@@ -436,5 +438,185 @@ struct LibraryDetailView: View {
             }
         }
     }
+    
+    // MARK: - Full-screen Item Details Overlay (Apple Music-style for tvOS)
+    struct ItemDetailsOverlay: View {
+        let item: LibraryItem
+        @Binding var isPresented: Bool
+        @EnvironmentObject var vm: ViewModel
+        @EnvironmentObject var audioManager: GlobalAudioManager
+        @State private var coverImage: Image? = nil
+        @State private var showFullDescription = false
+        
+        var body: some View {
+            HStack(alignment: .top, spacing: 60) {
+                // Left: XL cover art
+                VStack {
+                    if let coverImage {
+                        coverImage
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxWidth: 600, maxHeight: 600)
+                            .cornerRadius(20)
+                            .focusable()
+                    } else {
+                        Rectangle()
+                            .fill(Color.gray.opacity(0.3))
+                            .frame(width: 600, height: 600)
+                            .cornerRadius(20)
+                            .task { await loadCover() }
+                    }
+                    Spacer()
+                }
+                
+                // Right: metadata and actions
+                VStack(alignment: .leading, spacing: 20) {
+                    // Title (large)
+                    Text(item.title)
+                        .font(.largeTitle)
+                        .fontWeight(.bold)
+                        .lineLimit(3)
+                        .multilineTextAlignment(.leading)
+                    
+                    // Series (smaller than title)
+                    if let seriesName = item.seriesName, !seriesName.isEmpty {
+                        Text(seriesName)
+                            .font(.title2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                    
+                    // Author (smaller than series)
+                    if let author = item.authorNameLF ?? item.authorName {
+                        Text(author)
+                            .font(.title3)
+                            .foregroundStyle(.secondary)
+                    }
+                    
+                    // Description with "More" button (2 lines max)
+                    if !item.descriptionText.isEmpty {
+                        Button {
+                            showFullDescription = true
+                        } label: {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(item.descriptionText)
+                                    .font(.body)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                                    .multilineTextAlignment(.leading)
+                                Text("More")
+                                    .font(.callout)
+                                    .foregroundStyle(.blue)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .focusable()
+                        .sheet(isPresented: $showFullDescription) {
+                            ScrollView {
+                                VStack(alignment: .leading, spacing: 16) {
+                                    Text(item.title)
+                                        .font(.title2)
+                                        .bold()
+                                    Text(item.descriptionText)
+                                        .font(.body)
+                                }
+                                .padding(40)
+                            }
+                            .background(Color.black.ignoresSafeArea())
+                        }
+                    }
+                    
+                    // Play button (prominent)
+                    Button {
+                        Task {
+                            // Load the item into the audio manager
+                            await audioManager.loadItem(item, appVM: vm)
+                            // Start playback
+                            audioManager.play()
+                            // Close this overlay
+                            isPresented = false
+                        }
+                    } label: {
+                        Label("Play", systemImage: "play.fill")
+                            .font(.title2)
+                            .fontWeight(.bold)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .focusable()
+                    
+                    // Chapter list
+                    if !item.chapters.isEmpty {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Chapters")
+                                .font(.headline)
+                                .padding(.top, 8)
+                            
+                            List(Array(item.chapters.enumerated()), id: \.offset) { index, chapter in
+                                HStack {
+                                    Text("\(index + 1).")
+                                        .foregroundStyle(.secondary)
+                                        .font(.caption)
+                                        .frame(width: 30, alignment: .trailing)
+                                    
+                                    Text(chapter.title)
+                                        .lineLimit(1)
+                                    
+                                    Spacer()
+                                    
+                                    Text(durationString(max(0, chapter.end - chapter.start)))
+                                        .font(.caption)
+                                        .monospacedDigit()
+                                        .foregroundStyle(.secondary)
+                                }
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    Task {
+                                        // Load the item if not already loaded
+                                        if audioManager.currentItem?.id != item.id {
+                                            await audioManager.loadItem(item, appVM: vm)
+                                        }
+                                        // Seek to chapter start
+                                        audioManager.seek(to: chapter.start)
+                                        // Start playback
+                                        audioManager.play()
+                                        // Close overlay
+                                        isPresented = false
+                                    }
+                                }
+                            }
+                            .frame(maxHeight: 400)
+                        }
+                    }
+                    
+                    Spacer()
+                }
+                .frame(maxWidth: 800) // limit width on very wide screens
+            }
+            .padding(50)
+            .overlay(alignment: .topTrailing) {
+                Button("Close") { 
+                    isPresented = false 
+                }
+                .buttonStyle(.bordered)
+                .padding()
+            }
+            .background(Color.black.ignoresSafeArea())
+        }
+        
+        private func loadCover() async {
+            if let tuple = await vm.loadCover(for: item) {
+                coverImage = tuple.0
+            }
+        }
+        
+        private func durationString(_ seconds: Double) -> String {
+            let total = Int(seconds.rounded())
+            let h = total / 3600
+            let m = (total % 3600) / 60
+            let s = total % 60
+            if h > 0 { return String(format: "%d:%02d:%02d", h, m, s) }
+            return String(format: "%d:%02d", m, s)
+        }
+    }
 }
-

@@ -42,6 +42,9 @@ class APILogger {
         }
         if let data = data {
             print("Data Size: \(data.count) bytes")
+            if let bodyString = String(data: data, encoding: .utf8) {
+                print("Response Body: \(bodyString)")
+            }
         }
         print("========================\n")
         #endif
@@ -257,7 +260,8 @@ class ViewModel: ObservableObject {
         components.queryItems = [
             URLQueryItem(name: "limit", value: "\(limitParam)"),
             URLQueryItem(name: "sort", value: sortBy),
-            URLQueryItem(name: "desc", value: descBy)
+            URLQueryItem(name: "desc", value: descBy),
+            URLQueryItem(name: "expanded", value: "1")
         ]
         guard let url = components.url else {
             errorMessage = "Bad items URL"
@@ -281,11 +285,19 @@ class ViewModel: ObservableObject {
             
             let decoder = JSONDecoder()
             decoder.keyDecodingStrategy = .convertFromSnakeCase
-            
+
             if let wrapper = try? decoder.decode(ResultsWrapper.self, from: data) {
+                #if DEBUG
+                if let firstItem = wrapper.results.first {
+                    print("[ViewModel] First item chapters count: \(firstItem.chapters.count)")
+                    if !firstItem.chapters.isEmpty {
+                        print("[ViewModel] First chapter: \(firstItem.chapters[0].title)")
+                    }
+                }
+                #endif
                 return wrapper.results
             }
-            
+
             errorMessage = "Unexpected JSON structure for library items"
             return nil
         } catch {
@@ -377,6 +389,13 @@ extension ViewModel {
             let decoder = JSONDecoder()
             decoder.keyDecodingStrategy = .convertFromSnakeCase
             let item = try decoder.decode(LibraryItem.self, from: data)
+
+            #if DEBUG
+            print("[ViewModel] Fetched item details - title: \(item.title)")
+            print("[ViewModel] Author info - authorNameLF: \(String(describing: item.authorNameLF)), authorName: \(String(describing: item.authorName))")
+            print("[ViewModel] Chapters count: \(item.chapters.count)")
+            #endif
+
             return item
         } catch {
             APILogger.logError(error, description: "Fetch Library Item Details")
@@ -432,13 +451,18 @@ extension ViewModel {
     /// - Parameters:
     ///   - item: The library item
     ///   - seconds: Current playback position in seconds
-    func saveProgress(for item: LibraryItem, seconds: Double) async {
+    ///   - duration: Total duration (optional, falls back to item.duration)
+    ///   - timeListened: Total time listened (optional)
+    ///   - startedAt: Timestamp when playback started in milliseconds (optional)
+    func saveProgress(for item: LibraryItem, seconds: Double, duration: Double? = nil, timeListened: Double? = nil, startedAt: Int? = nil) async {
         guard !host.isEmpty, !apiKey.isEmpty else {
             print("[ViewModel] Cannot save progress: missing host or API key")
             return
         }
 
-        guard let duration = item.duration else {
+        // Use provided duration, or fall back to item.duration
+        let actualDuration = duration ?? item.duration
+        guard let actualDuration = actualDuration else {
             print("[ViewModel] Cannot save progress: missing duration for item \(item.id)")
             return
         }
@@ -448,22 +472,31 @@ extension ViewModel {
             return
         }
 
-        components.path = "/api/me/progress"
+        components.path = "/api/me/progress/\(item.id)"
 
         guard let url = components.url else {
             print("[ViewModel] Failed to construct progress URL")
             return
         }
 
-        let progress = min(1.0, max(0.0, seconds / duration))
+        let progress = min(1.0, max(0.0, seconds / actualDuration))
+        let now = Int(Date().timeIntervalSince1970 * 1000) // milliseconds
 
-        let payload: [String: Any] = [
-            "libraryItemId": item.id,
-            "duration": duration,
+        var payload: [String: Any] = [
+            "duration": actualDuration,
             "progress": progress,
             "currentTime": seconds,
-            "isFinished": progress >= 0.99
+            "isFinished": progress >= 0.99,
+            "lastUpdate": now
         ]
+
+        // Add optional fields if provided
+        if let timeListened = timeListened {
+            payload["timeListened"] = timeListened
+        }
+        if let startedAt = startedAt {
+            payload["startedAt"] = startedAt
+        }
 
         var request = URLRequest(url: url)
         request.httpMethod = "PATCH"
@@ -490,6 +523,151 @@ extension ViewModel {
             }
         } catch {
             APILogger.logError(error, description: "Save Progress")
+        }
+    }
+
+    // MARK: - Session Management
+
+    /// Start/open a playback session
+    /// - Parameters:
+    ///   - item: The library item
+    ///   - deviceInfo: Optional device information
+    /// - Returns: Session ID if successful
+    func startSession(for item: LibraryItem, deviceInfo: [String: Any]? = nil) async -> String? {
+        guard !host.isEmpty, !apiKey.isEmpty else {
+            print("[ViewModel] Cannot start session: missing host or API key")
+            return nil
+        }
+
+        guard var components = URLComponents(string: host) else {
+            print("[ViewModel] Invalid host URL: \(host)")
+            return nil
+        }
+
+        components.path = "/api/session/local"
+
+        guard let url = components.url else {
+            print("[ViewModel] Failed to construct session URL")
+            return nil
+        }
+
+        let payload: [String: Any] = [
+            "libraryItemId": item.id,
+            "deviceInfo": deviceInfo ?? [
+                "deviceId": UIDevice.current.identifierForVendor?.uuidString ?? "unknown",
+                "clientName": "SwiftShelf",
+                "deviceName": UIDevice.current.name
+            ],
+            "startedAt": Int(Date().timeIntervalSince1970 * 1000)
+        ]
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+            APILogger.logRequest(request, description: "Start Session")
+
+            let (data, response) = try await URLSession.shared.data(for: request)
+            APILogger.logResponse(data, response, description: "Start Session")
+
+            if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 {
+                // Try to parse JSON response
+                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    if let sessionId = json["id"] as? String {
+                        print("[ViewModel] Session started with ID from JSON: \(sessionId)")
+                        return sessionId
+                    }
+                    print("[ViewModel] Session JSON response: \(json)")
+                }
+
+                // If response is just "OK", try to get session ID from response body as string
+                if let bodyString = String(data: data, encoding: .utf8) {
+                    print("[ViewModel] Session response body: \(bodyString)")
+                    // Check if it's a plain session ID
+                    if bodyString != "OK" && !bodyString.isEmpty {
+                        print("[ViewModel] Using response body as session ID: \(bodyString)")
+                        return bodyString
+                    }
+                }
+
+                print("[ViewModel] ⚠️ Session started but no session ID in response")
+            }
+        } catch {
+            APILogger.logError(error, description: "Start Session")
+        }
+
+        return nil
+    }
+
+    /// Sync/update an open session
+    /// - Parameters:
+    ///   - sessionId: The session ID
+    ///   - currentTime: Current playback position
+    ///   - duration: Total duration
+    ///   - timeListened: Actual time listened (optional, defaults to currentTime)
+    func syncSession(sessionId: String, currentTime: Double, duration: Double, timeListened: Double? = nil) async {
+        guard !host.isEmpty, !apiKey.isEmpty else { return }
+
+        guard var components = URLComponents(string: host) else { return }
+        components.path = "/api/session/\(sessionId)/sync"
+
+        guard let url = components.url else { return }
+
+        let payload: [String: Any] = [
+            "currentTime": currentTime,
+            "duration": duration,
+            "timeListened": timeListened ?? currentTime
+        ]
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+
+            APILogger.logRequest(request, description: "Sync Session")
+
+            let (data, response) = try await URLSession.shared.data(for: request)
+
+            APILogger.logResponse(data, response, description: "Sync Session")
+
+            if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 {
+                print("[ViewModel] Session synced: \(sessionId)")
+            } else if let httpResponse = response as? HTTPURLResponse {
+                print("[ViewModel] Session sync failed: \(httpResponse.statusCode)")
+            }
+        } catch {
+            print("[ViewModel] Session sync failed: \(error)")
+        }
+    }
+
+    /// Close a playback session
+    /// - Parameter sessionId: The session ID
+    func closeSession(sessionId: String) async {
+        guard !host.isEmpty, !apiKey.isEmpty else { return }
+
+        guard var components = URLComponents(string: host) else { return }
+        components.path = "/api/session/local/\(sessionId)"
+
+        guard let url = components.url else { return }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+
+        do {
+            let (_, response) = try await URLSession.shared.data(for: request)
+
+            if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 {
+                print("[ViewModel] Session closed: \(sessionId)")
+            }
+        } catch {
+            print("[ViewModel] Close session failed: \(error)")
         }
     }
 
