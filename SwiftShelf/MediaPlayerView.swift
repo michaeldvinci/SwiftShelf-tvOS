@@ -461,10 +461,13 @@ final class PlayerViewModel: NSObject, ObservableObject {
         player = nil
         cancelSleepTimer()
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
-        MPRemoteCommandCenter.shared().playCommand.removeTarget(nil)
-        MPRemoteCommandCenter.shared().pauseCommand.removeTarget(nil)
-        MPRemoteCommandCenter.shared().skipBackwardCommand.removeTarget(nil)
-        MPRemoteCommandCenter.shared().skipForwardCommand.removeTarget(nil)
+        
+        // Properly cleanup remote command targets
+        let cmd = MPRemoteCommandCenter.shared()
+        cmd.playCommand.removeTarget(nil)
+        cmd.pauseCommand.removeTarget(nil)
+        cmd.skipBackwardCommand.removeTarget(nil)
+        cmd.skipForwardCommand.removeTarget(nil)
     }
 
     func setupTrackEndObserver() {
@@ -655,6 +658,13 @@ final class PlayerViewModel: NSObject, ObservableObject {
     func setupRemoteCommands() {
         AppLogger.shared.log("PlayerVM", "setupRemoteCommands")
         let cmd = MPRemoteCommandCenter.shared()
+        
+        // Remove existing targets first to prevent duplicates
+        cmd.playCommand.removeTarget(nil)
+        cmd.pauseCommand.removeTarget(nil)
+        cmd.skipBackwardCommand.removeTarget(nil)
+        cmd.skipForwardCommand.removeTarget(nil)
+        
         cmd.playCommand.isEnabled = true
         cmd.playCommand.addTarget { [weak self] _ in self?.play(); return .success }
         cmd.pauseCommand.isEnabled = true
@@ -1044,6 +1054,9 @@ struct GlobalPlayerView: UIViewControllerRepresentable {
         controller.showsPlaybackControls = true
         controller.allowsPictureInPicturePlayback = false
         controller.view.backgroundColor = .black
+        
+        // Ensure proper view hierarchy setup
+        controller.view.translatesAutoresizingMaskIntoConstraints = false
 
         print("[GlobalPlayerView] Creating player view controller")
         if artwork != nil {
@@ -1052,15 +1065,24 @@ struct GlobalPlayerView: UIViewControllerRepresentable {
             print("[GlobalPlayerView] ❌ No artwork")
         }
 
-        configureMetadata(for: controller)
+        // Defer metadata configuration to avoid early view hierarchy issues
+        DispatchQueue.main.async {
+            self.configureMetadata(for: controller)
+        }
+        
         return controller
     }
 
     func updateUIViewController(_ uiViewController: AVPlayerViewController, context: Context) {
-        if uiViewController.player != player {
+        // Only update if actually different to avoid unnecessary updates
+        if uiViewController.player !== player {
             uiViewController.player = player
+            
+            // Defer metadata configuration to avoid view hierarchy issues
+            DispatchQueue.main.async {
+                self.configureMetadata(for: uiViewController)
+            }
         }
-        configureMetadata(for: uiViewController)
     }
 
     private func configureMetadata(for controller: AVPlayerViewController) {

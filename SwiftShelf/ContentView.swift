@@ -150,7 +150,6 @@ struct ContentView: View {
                 .tag(-998)
 
             searchTabView
-                .onAppear { searchFieldIsFocused = true }
                 .tabItem { Image(systemName: "magnifyingglass") }
                 .tag(-1)
 
@@ -578,8 +577,6 @@ struct ContentView: View {
                 @State var pageIndex: Int = 0
                 
                 VStack(spacing: 40) {
-                    Spacer()
-                    
                     HStack(alignment: .center, spacing: 80) {
                         // Left side: Large cover art
                         VStack {
@@ -590,7 +587,6 @@ struct ContentView: View {
                                     .frame(maxWidth: 500, maxHeight: 500)
                                     .cornerRadius(20)
                                     .shadow(radius: 20)
-                                    .focusable()
                             } else if let image = coverCache[current.id] {
                                 image
                                     .resizable()
@@ -598,19 +594,18 @@ struct ContentView: View {
                                     .frame(maxWidth: 500, maxHeight: 500)
                                     .cornerRadius(20)
                                     .shadow(radius: 20)
-                                    .focusable()
                             } else {
                                 Rectangle()
                                     .fill(Color.gray.opacity(0.3))
                                     .frame(width: 500, height: 500)
                                     .cornerRadius(20)
                                     .shadow(radius: 20)
-                                    .task { 
-                                        await loadCover(for: current) 
+                                    .task {
+                                        await loadCover(for: current)
                                     }
                             }
                         }
-                        
+
                         // Right side: Metadata and controls
                         VStack(alignment: .leading, spacing: 24) {
                             // Title
@@ -620,36 +615,39 @@ struct ContentView: View {
                                 .foregroundColor(.white)
                                 .lineLimit(2)
                                 .multilineTextAlignment(.leading)
-                            
+
                             // Author
                             Text(current.authorNameLF ?? current.authorName ?? "Unknown Author")
                                 .font(.title2)
                                 .foregroundColor(.white.opacity(0.8))
                                 .lineLimit(1)
-                            
+
                             // Current chapter (if available)
                             if !chapters.isEmpty {
                                 let currentChapter = chapters.first { chapter in
                                     audioManager.currentTime >= chapter.start && audioManager.currentTime <= chapter.end
                                 } ?? chapters.first
-                                
+
                                 if let chapter = currentChapter {
                                     VStack(alignment: .leading, spacing: 8) {
                                         Text("Chapter \(chapters.firstIndex(of: chapter).map { $0 + 1 } ?? 1)")
                                             .font(.caption)
                                             .foregroundColor(.white.opacity(0.6))
                                             .textCase(.uppercase)
-                                        
+
                                         Text(chapter.title)
                                             .font(.title3)
                                             .foregroundColor(.white.opacity(0.9))
                                             .lineLimit(2)
                                     }
-                                    
+
                                     // Chapter progress
                                     ChapterSeekBar(
                                         currentTime: max(0, audioManager.currentTime - chapter.start),
                                         duration: max(0, chapter.end - chapter.start),
+                                        chapters: chapters,
+                                        currentChapterIndex: chapters.firstIndex(of: chapter) ?? 0,
+                                        audioManager: audioManager,
                                         onSeek: { seekTime in
                                             audioManager.seek(to: chapter.start + seekTime)
                                         }
@@ -662,6 +660,9 @@ struct ContentView: View {
                                     ChapterSeekBar(
                                         currentTime: audioManager.currentTime,
                                         duration: duration,
+                                        chapters: [],
+                                        currentChapterIndex: 0,
+                                        audioManager: audioManager,
                                         onSeek: { seekTime in
                                             audioManager.seek(to: seekTime)
                                         }
@@ -669,94 +670,43 @@ struct ContentView: View {
                                     .padding(.top, 16)
                                 }
                             }
-                            
-                            // Playback controls
-                            HStack(spacing: 40) {
-                                Button {
-                                    let newTime = max(0, audioManager.currentTime - 30)
-                                    audioManager.seek(to: newTime)
-                                } label: {
-                                    Image(systemName: "gobackward.30")
-                                        .font(.system(size: 32))
-                                        .foregroundColor(.white)
-                                }
-                                .focusable()
-                                
-                                Button {
-                                    if audioManager.isPlaying {
-                                        audioManager.pause()
-                                    } else {
-                                        audioManager.play()
-                                    }
-                                } label: {
-                                    Image(systemName: audioManager.isPlaying ? "pause.fill" : "play.fill")
-                                        .font(.system(size: 40))
-                                        .foregroundColor(.white)
-                                }
-                                .focusable()
-                                .buttonStyle(.borderedProminent)
-                                .controlSize(.large)
-                                
-                                Button {
-                                    if let duration = current.duration {
-                                        let newTime = min(duration, audioManager.currentTime + 30)
-                                        audioManager.seek(to: newTime)
-                                    }
-                                } label: {
-                                    Image(systemName: "goforward.30")
-                                        .font(.system(size: 32))
-                                        .foregroundColor(.white)
-                                }
-                                .focusable()
-                            }
-                            .padding(.top, 20)
                         }
                         .frame(maxWidth: 600)
                     }
-                    
-                    Spacer()
-                    
+
                     // Chapter navigation (if chapters exist)
                     if !chapters.isEmpty && chapters.count > 1 {
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 16) {
                                 ForEach(Array(chapters.enumerated()), id: \.offset) { index, chapter in
                                     let isCurrentChapter = audioManager.currentTime >= chapter.start && audioManager.currentTime <= chapter.end
-                                    
+
                                     Button {
                                         audioManager.seek(to: chapter.start)
                                     } label: {
                                         VStack(alignment: .leading, spacing: 4) {
                                             Text("Chapter \(index + 1)")
                                                 .font(.caption2)
-                                                .foregroundColor(isCurrentChapter ? .accentColor : .white.opacity(0.6))
                                                 .textCase(.uppercase)
-                                            
+
                                             Text(chapter.title)
                                                 .font(.caption)
-                                                .foregroundColor(isCurrentChapter ? .white : .white.opacity(0.8))
                                                 .lineLimit(1)
                                                 .frame(maxWidth: 200, alignment: .leading)
                                         }
                                         .padding(.horizontal, 12)
                                         .padding(.vertical, 8)
-                                        .background(
-                                            RoundedRectangle(cornerRadius: 8)
-                                                .fill(isCurrentChapter ? Color.accentColor.opacity(0.2) : Color.clear)
-                                        )
                                     }
-                                    .buttonStyle(.plain)
-                                    .focusable()
+                                    .buttonStyle(ChapterButtonStyle(isCurrent: isCurrentChapter))
                                 }
                             }
                             .padding(.horizontal, 40)
                         }
-                        .frame(height: 60)
+                        .frame(height: 80)
                     }
-                    
-                    Spacer()
                 }
-                .padding(40)
+                .padding(.horizontal, 40)
+                .padding(.top, 60)
                 .task {
                     // Load cover into cache if not already loaded
                     if coverCache[current.id] == nil {
@@ -792,14 +742,17 @@ struct ContentView: View {
     struct ChapterSeekBar: View {
         let currentTime: Double
         let duration: Double
+        let chapters: [LibraryItem.Chapter]
+        let currentChapterIndex: Int
+        let audioManager: GlobalAudioManager
         let onSeek: (Double) -> Void
-        
+
         var body: some View {
-            VStack(spacing: 12) {
+            VStack(spacing: 16) {
                 // Use ProgressView for tvOS since Slider is not available
                 ProgressView(value: duration > 0 ? max(0, min(1, currentTime / duration)) : 0)
                     .tint(.white)
-                
+
                 // Time labels
                 HStack {
                     Text(timeString(max(0, currentTime)))
@@ -810,29 +763,72 @@ struct ContentView: View {
                         .font(.caption)
                         .monospacedDigit()
                 }
-                
-                // Add seek controls using buttons for tvOS
-                HStack(spacing: 30) {
+
+                // Playback controls
+                HStack(spacing: 24) {
+                    // Previous chapter button
                     Button {
-                        let newTime = max(0, currentTime - 30) // Skip back 30 seconds
+                        if !chapters.isEmpty && currentChapterIndex > 0 {
+                            audioManager.seek(to: chapters[currentChapterIndex - 1].start)
+                        }
+                    } label: {
+                        Image(systemName: "backward.end.fill")
+                            .font(.system(size: 28))
+                    }
+                    .buttonStyle(PlayerControlButtonStyle())
+                    .disabled(chapters.isEmpty || currentChapterIndex == 0)
+                    .opacity((chapters.isEmpty || currentChapterIndex == 0) ? 0.3 : 1.0)
+
+                    // Back 30s button
+                    Button {
+                        let newTime = max(0, currentTime - 30)
                         onSeek(newTime)
                     } label: {
                         Image(systemName: "gobackward.30")
-                            .font(.title2)
+                            .font(.system(size: 28))
                     }
-                    .focusable()
-                    
-                    Spacer()
-                    
+                    .buttonStyle(PlayerControlButtonStyle())
+
+                    // Play/Pause button
                     Button {
-                        let newTime = min(duration, currentTime + 30) // Skip forward 30 seconds
+                        if audioManager.isPlaying {
+                            audioManager.pause()
+                        } else {
+                            audioManager.play()
+                        }
+                    } label: {
+                        Image(systemName: audioManager.isPlaying ? "pause.fill" : "play.fill")
+                            .font(.system(size: 36))
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+
+                    // Forward 30s button
+                    Button {
+                        let newTime = min(duration, currentTime + 30)
                         onSeek(newTime)
                     } label: {
                         Image(systemName: "goforward.30")
-                            .font(.title2)
+                            .font(.system(size: 28))
                     }
-                    .focusable()
+                    .buttonStyle(PlayerControlButtonStyle())
+
+                    // Next chapter button
+                    Button {
+                        if !chapters.isEmpty && currentChapterIndex < chapters.count - 1 {
+                            audioManager.seek(to: chapters[currentChapterIndex + 1].start)
+                        }
+                    } label: {
+                        Image(systemName: "forward.end.fill")
+                            .font(.system(size: 28))
+                    }
+                    .buttonStyle(PlayerControlButtonStyle())
+                    .disabled(chapters.isEmpty || currentChapterIndex >= chapters.count - 1)
+                    .opacity((chapters.isEmpty || currentChapterIndex >= chapters.count - 1) ? 0.3 : 1.0)
                 }
+
+                // Playback speed control
+                PlaybackSpeedControl(audioManager: audioManager)
             }
         }
         
@@ -843,6 +839,85 @@ struct ContentView: View {
             let s = total % 60
             if h > 0 { return String(format: "%d:%02d:%02d", h, m, s) }
             return String(format: "%d:%02d", m, s)
+        }
+    }
+
+    // MARK: - Playback Speed Control
+    struct PlaybackSpeedControl: View {
+        @ObservedObject var audioManager: GlobalAudioManager
+
+        var body: some View {
+            HStack(spacing: 20) {
+                Text("Speed:")
+                    .font(.caption)
+                    .foregroundColor(.white.opacity(0.8))
+
+                // Decrease speed button (by 0.25)
+                Button {
+                    let newRate = max(0.5, audioManager.rate - 0.25)
+                    audioManager.setRate(newRate)
+                } label: {
+                    Image(systemName: "minus.circle.fill")
+                        .font(.title3)
+                }
+                .buttonStyle(PlayerControlButtonStyle())
+                .disabled(audioManager.rate <= 0.5)
+                .opacity(audioManager.rate <= 0.5 ? 0.3 : 1.0)
+
+                // Current speed display
+                Text(formatSpeed(audioManager.rate))
+                    .font(.title3)
+                    .foregroundColor(.white)
+                    .frame(minWidth: 60)
+                    .fontWeight(.medium)
+
+                // Increase speed button (by 0.25)
+                Button {
+                    let newRate = min(3.0, audioManager.rate + 0.25)
+                    audioManager.setRate(newRate)
+                } label: {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.title3)
+                }
+                .buttonStyle(PlayerControlButtonStyle())
+                .disabled(audioManager.rate >= 3.0)
+                .opacity(audioManager.rate >= 3.0 ? 0.3 : 1.0)
+            }
+            .padding(.top, 12)
+        }
+
+        private func formatSpeed(_ speed: Float) -> String {
+            return String(format: "%.2fx", speed)
+        }
+    }
+
+    // MARK: - Custom Button Styles for tvOS
+    struct PlayerControlButtonStyle: ButtonStyle {
+        @Environment(\.isFocused) var isFocused
+
+        func makeBody(configuration: Configuration) -> some View {
+            configuration.label
+                .foregroundColor(isFocused ? .black : .white)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(isFocused ? Color.white : Color.clear)
+                )
+        }
+    }
+
+    struct ChapterButtonStyle: ButtonStyle {
+        let isCurrent: Bool
+        @Environment(\.isFocused) var isFocused
+
+        func makeBody(configuration: Configuration) -> some View {
+            configuration.label
+                .foregroundColor(isFocused ? .black : .white)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(isFocused ? Color.white : (isCurrent ? Color.accentColor.opacity(0.2) : Color.white.opacity(0.1)))
+                )
         }
     }
 
@@ -872,16 +947,6 @@ struct ContentView: View {
 
         var body: some View {
             ZStack {
-                // Debug: Log chapter count
-                let _ = {
-                    #if DEBUG
-                    print("[ItemDetailsFullScreenView] Item: \(displayItem.title), Chapters count: \(displayItem.chapters.count)")
-                    if !displayItem.chapters.isEmpty {
-                        print("[ItemDetailsFullScreenView] First chapter: \(displayItem.chapters[0].title)")
-                    }
-                    #endif
-                }()
-
                 // Blurry background using cover art (matching Now Playing style)
                 if let coverImage {
                     coverImage
@@ -991,7 +1056,11 @@ struct ContentView: View {
 
         @ViewBuilder
         private var authorSection: some View {
-            EmptyView()
+            if let author = displayItem.authorNameLF ?? displayItem.authorName {
+                Text(author)
+                    .font(.headline)
+                    .foregroundColor(.white.opacity(0.7))
+            }
         }
 
         @ViewBuilder

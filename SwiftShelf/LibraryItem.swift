@@ -16,10 +16,18 @@ struct LibraryItem: Identifiable, Codable {
         media?.metadata.title ?? "Untitled"
     }
     var authorNameLF: String? {
-        media?.metadata.authorNameLF
+        if let authorNameLF = media?.metadata.authorNameLF {
+            return authorNameLF
+        }
+        // Fallback: compute from authors array
+        return media?.metadata.authors?.first?.name
     }
     var authorName: String? {
-        media?.metadata.authorName
+        if let authorName = media?.metadata.authorName {
+            return authorName
+        }
+        // Fallback: compute from authors array
+        return media?.metadata.authors?.first?.name
     }
     var seriesName: String? {
         media?.metadata.seriesName
