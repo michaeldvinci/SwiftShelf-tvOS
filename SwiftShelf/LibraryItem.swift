@@ -11,6 +11,7 @@ struct LibraryItem: Identifiable, Codable {
     let id: String
     let media: Media?
     let userMediaProgress: UserMediaProgress?
+    let libraryFiles: [LibraryFile]?
 
     var title: String {
         media?.metadata.title ?? "Untitled"
@@ -128,10 +129,28 @@ struct LibraryItem: Identifiable, Codable {
         let contentUrl: String
         let mimeType: String?
         let metadata: TrackMetadata?
-        
+
         var id: Int { index }
-        
+
         struct TrackMetadata: Codable {
+            let filename: String?
+            let ext: String?
+            let path: String?
+            let relPath: String?
+            let size: Int64?
+        }
+    }
+
+    struct LibraryFile: Identifiable, Codable {
+        let ino: String
+        let metadata: LibraryFileMetadata
+        let fileType: String?
+        let addedAt: Double?
+        let updatedAt: Double?
+
+        var id: String { ino }
+
+        struct LibraryFileMetadata: Codable {
             let filename: String?
             let ext: String?
             let path: String?
@@ -167,5 +186,13 @@ extension LibraryItem {
             return description
         }
         return ""
+    }
+
+    var ebookFile: LibraryFile? {
+        libraryFiles?.first(where: { $0.fileType == "ebook" })
+    }
+
+    var hasEbook: Bool {
+        ebookFile != nil
     }
 }

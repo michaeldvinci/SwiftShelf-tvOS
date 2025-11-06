@@ -39,17 +39,20 @@ struct ContentView: View {
     @FocusState private var focusedResultID: String?
 
     @State private var selectedMediaItem: LibraryItem? = nil
+    @State private var currentEbook: (item: LibraryItem, file: LibraryItem.LibraryFile)? = nil
+    @State private var showChapterMenu = false
 
     var body: some View {
         NavigationView {
             if let selectedItem = selectedMediaItem {
                 ItemDetailsFullScreenView(
-                    item: selectedItem, 
+                    item: selectedItem,
                     isPresented: Binding(
                         get: { selectedMediaItem != nil },
                         set: { if !$0 { selectedMediaItem = nil } }
                     ),
-                    selectedTabIndex: $selectedTabIndex
+                    selectedTabIndex: $selectedTabIndex,
+                    currentEbook: $currentEbook
                 )
                 .environmentObject(vm)
                 .environmentObject(audioManager)
@@ -148,6 +151,38 @@ struct ContentView: View {
                 .environmentObject(vm)
                 .tabItem { Image(systemName: "play.circle") }
                 .tag(-998)
+
+            // Reading tab
+            Group {
+                if let ebook = currentEbook {
+                    EPUBReaderView(
+                        item: ebook.item,
+                        ebookFile: ebook.file,
+                        showChapterMenu: $showChapterMenu
+                    )
+                    .environmentObject(vm)
+                } else {
+                    VStack(spacing: 20) {
+                        Image(systemName: "book.closed")
+                            .font(.system(size: 80))
+                            .foregroundColor(.gray)
+                        Text("No ebook selected")
+                            .font(.title2)
+                            .foregroundColor(.gray)
+                        Text("Select a book and tap READ to start reading")
+                            .font(.body)
+                            .foregroundColor(.gray.opacity(0.7))
+                    }
+                }
+            }
+            .tabItem { Image(systemName: "book.fill") }
+            .tag(-997)
+            .onChange(of: selectedTabIndex) { oldValue, newValue in
+                // If user clicks the book tab while already reading, show chapter menu
+                if newValue == -997 && oldValue == -997 && currentEbook != nil {
+                    showChapterMenu = true
+                }
+            }
 
             searchTabView
                 .tabItem { Image(systemName: "magnifyingglass") }
@@ -937,8 +972,9 @@ struct ContentView: View {
         @FocusState private var descriptionButtonFocused: Bool
         @FocusState private var focusedChapterID: String?
 
-        // Access to parent's selectedTabIndex
+        // Access to parent's state
         @Binding var selectedTabIndex: Int
+        @Binding var currentEbook: (item: LibraryItem, file: LibraryItem.LibraryFile)?
 
         // Use fullItem if loaded, otherwise fallback to item
         private var displayItem: LibraryItem {
@@ -1099,25 +1135,42 @@ struct ContentView: View {
         
         @ViewBuilder
         private var playButtonSection: some View {
-            Button {
-                Task {
-                    // Load the item into the audio manager (use fullItem if available for chapters)
-                    await audioManager.loadItem(displayItem, appVM: vm)
-                    // Start playback
-                    audioManager.play()
-                    // Switch to Now Playing tab (-998)
-                    selectedTabIndex = -998
-                    // Close this overlay
-                    isPresented = false
+            HStack(spacing: 16) {
+                Button {
+                    Task {
+                        // Load the item into the audio manager (use fullItem if available for chapters)
+                        await audioManager.loadItem(displayItem, appVM: vm)
+                        // Start playback
+                        audioManager.play()
+                        // Switch to Now Playing tab (-998)
+                        selectedTabIndex = -998
+                        // Close this overlay
+                        isPresented = false
+                    }
+                } label: {
+                    Label("Play", systemImage: "play.fill")
+                        .font(.title3)
+                        .fontWeight(.bold)
                 }
-            } label: {
-                Label("Play", systemImage: "play.fill")
-                    .font(.title3)
-                    .fontWeight(.bold)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.regular)
+                .focused($playButtonFocused)
+
+                if displayItem.hasEbook, let ebookFile = displayItem.ebookFile {
+                    Button {
+                        // Set current ebook and switch to Reading tab
+                        currentEbook = (item: displayItem, file: ebookFile)
+                        selectedTabIndex = -997
+                        isPresented = false
+                    } label: {
+                        Label("Read", systemImage: "book.fill")
+                            .font(.title3)
+                            .fontWeight(.bold)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.regular)
+                }
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.regular)
-            .focused($playButtonFocused)
         }
 
         @ViewBuilder
