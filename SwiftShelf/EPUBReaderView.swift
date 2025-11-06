@@ -13,13 +13,22 @@ struct EPUBReaderView: View {
     @Binding var showChapterMenu: Bool
     @EnvironmentObject var vm: ViewModel
 
-    @State private var currentPage = 0
+    @AppStorage private var currentPage: Int
     @State private var chapters: [EPUBParser.EPUBContent.Chapter] = []
     @State private var paginatedPages: [String] = []
     @State private var spineToPageMap: [String: Int] = [:]  // Maps spine href to starting page index
     @State private var tocChapters: [EPUBParser.EPUBContent.TOCChapter] = []
     @State private var isLoading = true
     @State private var errorMessage: String?
+    @State private var hasLoadedOnce = false  // Track if we've already loaded this book
+
+    init(item: LibraryItem, ebookFile: LibraryItem.LibraryFile, showChapterMenu: Binding<Bool>) {
+        self.item = item
+        self.ebookFile = ebookFile
+        self._showChapterMenu = showChapterMenu
+        // Use item ID as the key for storing current page
+        self._currentPage = AppStorage(wrappedValue: 0, "epub_page_\(item.id)")
+    }
 
     @FocusState private var leftButtonFocused: Bool
     @FocusState private var rightButtonFocused: Bool
@@ -474,8 +483,13 @@ struct EPUBReaderView: View {
             // Paginate content to fit screen height
             paginateContent(spineItems: epubContent.spineItems)
 
-            // Start on page 0 (which shows cover, then page 1 is first chapter)
-            currentPage = 0
+            // Only reset to page 0 if this is the first time loading this book
+            if !hasLoadedOnce && currentPage == 0 {
+                currentPage = 0
+            }
+            hasLoadedOnce = true
+
+            print("📖 Restored to page \(currentPage)")
 
             isLoading = false
 
