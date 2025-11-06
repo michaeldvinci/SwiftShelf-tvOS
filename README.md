@@ -22,16 +22,27 @@ Tear it apart, and leave some comments in the Issues tab!
 ### Library Browsing
 - **Recent & Continue Listening Carousels**
   Browse your most recently added audiobooks and quickly jump back into in-progress titles. Each carousel is focus-aware and shows cover artwork, author, and duration with playback progress overlays.
-  ![Library view 1](_res/library-view.png)
+  ![Library view 1](_res/library-view-1.png)
 
 - **Search with Smart Shortcuts**
   Query your Audiobookshelf library with the same semantics as the web client. Results are grouped by books, narrators, and series, and recent search terms stay pinned for one-click access.
   ![Search](_res/search-1.png)
 
 ### Item Details & Playback
-- **Full-Screen Item Detail View**
-  Selecting a title opens a polished full-screen view with cover artwork, author, description, and a chapter list. Navigate directly to any chapter or start playback with the prominent play button.
-  ![Item info view](_res/item-info-1.png)
+- **Full-Screen Item Detail View & Play/Read Options**
+  Selecting a title opens a polished full-screen view with cover artwork, author, description, and a chapter list. For audiobooks, tap PLAY to start listening. For items with ebook files, tap READ to open the integrated reader.
+  ![Item info view](_res/item-info-2.png)
+
+- **Built-in EPUB Reader**
+  Read your ebooks directly on Apple TV with a beautiful 2-panel sepia-toned reader. Features include:
+  - **Dual-page layout** mimicking a real book spread
+  - **Sepia color scheme** for comfortable reading
+  - **Smart pagination** that prevents text from being cut off mid-line
+  - **Chapter navigation menu** with hamburger button in the top-left corner
+  - **TOC parsing** from EPUB NCX/Nav files for accurate chapter listings
+  - **Focus-friendly controls** with left/right navigation arrows
+  ![EPUB Reader](_res/epub-reader.png)
+  ![EPUB Chapter Menu](_res/epub-reader-chapter-view.png)
 
 - **Chapter Navigation**
   Browse and select chapters directly from the detail view. Each chapter shows its title and duration, with visual feedback for the currently playing chapter. Jump to any chapter instantly while maintaining playback state.
@@ -43,7 +54,8 @@ Tear it apart, and leave some comments in the Issues tab!
   - Transport controls: previous chapter, skip back 30s, play/pause, skip forward 30s, next chapter
   - Playback speed adjustment (0.5x - 3.0x in 0.25x increments)
   - Real-time progress updates
-  ![Player](_res/player.png)
+
+  ![Player](_res/player-2.png)
 
 - **Background Audio Support**
   Audio continues playing when you navigate between screens or return to the home screen. Perfect for long listening sessions across multiple apps.
@@ -61,6 +73,7 @@ Tear it apart, and leave some comments in the Issues tab!
 ### Customization
 - **Customizable Experience**
   Tune how many items each library fetches, pick the carousel progress-bar color (including rainbow), and set a preferred default playback speed. All settings persist and trigger live refreshes.
+
   ![Settings](_res/settings-1.png)
 
 - **Authenticated Cover Fetching**
