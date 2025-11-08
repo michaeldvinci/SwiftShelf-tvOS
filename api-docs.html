@@ -1,0 +1,924 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audiobookshelf API - Local Reference</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #1a1a1a;
+            color: #e0e0e0;
+            display: flex;
+            height: 100vh;
+        }
+
+        .sidebar {
+            width: 300px;
+            background: #252525;
+            border-right: 1px solid #333;
+            overflow-y: auto;
+            padding: 20px;
+        }
+
+        .search-box {
+            width: 100%;
+            padding: 10px;
+            background: #1a1a1a;
+            border: 1px solid #444;
+            border-radius: 5px;
+            color: #e0e0e0;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+
+        .search-box:focus {
+            outline: none;
+            border-color: #4a9eff;
+        }
+
+        .nav-section {
+            margin-bottom: 15px;
+        }
+
+        .nav-section h3 {
+            color: #4a9eff;
+            font-size: 14px;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .nav-item {
+            padding: 8px 10px;
+            cursor: pointer;
+            border-radius: 4px;
+            font-size: 13px;
+            margin-bottom: 4px;
+            color: #b0b0b0;
+            transition: all 0.2s;
+        }
+
+        .nav-item:hover {
+            background: #2a2a2a;
+            color: #fff;
+        }
+
+        .nav-item.active {
+            background: #4a9eff;
+            color: #fff;
+        }
+
+        .method-badge {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 10px;
+            font-weight: bold;
+            margin-right: 8px;
+        }
+
+        .method-get { background: #61affe; color: #fff; }
+        .method-post { background: #49cc90; color: #fff; }
+        .method-put { background: #fca130; color: #fff; }
+        .method-patch { background: #50e3c2; color: #000; }
+        .method-delete { background: #f93e3e; color: #fff; }
+
+        .content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 40px;
+        }
+
+        .endpoint {
+            background: #252525;
+            border-radius: 8px;
+            padding: 25px;
+            margin-bottom: 30px;
+            border-left: 4px solid #4a9eff;
+            display: none;
+        }
+
+        .endpoint.active {
+            display: block;
+        }
+
+        .endpoint h2 {
+            color: #fff;
+            margin-bottom: 15px;
+            font-size: 24px;
+        }
+
+        .endpoint-path {
+            background: #1a1a1a;
+            padding: 15px;
+            border-radius: 5px;
+            font-family: 'Courier New', monospace;
+            margin: 15px 0;
+            color: #4a9eff;
+            font-size: 14px;
+        }
+
+        .section {
+            margin-bottom: 25px;
+        }
+
+        .section h3 {
+            color: #4a9eff;
+            margin-bottom: 10px;
+            font-size: 16px;
+        }
+
+        .param-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 10px 0;
+        }
+
+        .param-table th {
+            background: #2a2a2a;
+            padding: 10px;
+            text-align: left;
+            font-size: 12px;
+            color: #4a9eff;
+        }
+
+        .param-table td {
+            padding: 10px;
+            border-bottom: 1px solid #333;
+            font-size: 13px;
+        }
+
+        .param-table code {
+            background: #1a1a1a;
+            padding: 2px 6px;
+            border-radius: 3px;
+            color: #f093fb;
+        }
+
+        .code-block {
+            background: #1a1a1a;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            margin: 10px 0;
+        }
+
+        .code-block pre {
+            color: #b0b0b0;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 1.5;
+        }
+
+        .note {
+            background: #2a2a1a;
+            border-left: 4px solid #fca130;
+            padding: 12px;
+            margin: 15px 0;
+            border-radius: 4px;
+            font-size: 13px;
+        }
+
+        .iframe-link {
+            display: inline-block;
+            background: #4a9eff;
+            color: #fff;
+            padding: 10px 20px;
+            border-radius: 5px;
+            text-decoration: none;
+            margin-top: 20px;
+            font-size: 14px;
+        }
+
+        .iframe-link:hover {
+            background: #3a8eef;
+        }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <input type="text" class="search-box" id="searchBox" placeholder="Search endpoints...">
+
+        <div class="nav-section">
+            <h3>Core</h3>
+            <div class="nav-item" data-endpoint="auth">
+                <span class="method-badge method-post">POST</span> Login
+            </div>
+            <div class="nav-item" data-endpoint="libraries">
+                <span class="method-badge method-get">GET</span> Get Libraries
+            </div>
+            <div class="nav-item" data-endpoint="library-items">
+                <span class="method-badge method-get">GET</span> Library Items
+            </div>
+        </div>
+
+        <div class="nav-section">
+            <h3>Items</h3>
+            <div class="nav-item" data-endpoint="get-item">
+                <span class="method-badge method-get">GET</span> Get Item
+            </div>
+            <div class="nav-item" data-endpoint="play">
+                <span class="method-badge method-post">POST</span> Start Playback
+            </div>
+            <div class="nav-item" data-endpoint="progress">
+                <span class="method-badge method-patch">PATCH</span> Update Progress
+            </div>
+            <div class="nav-item" data-endpoint="ebook">
+                <span class="method-badge method-get">GET</span> Get Ebook File
+            </div>
+        </div>
+
+        <div class="nav-section">
+            <h3>User</h3>
+            <div class="nav-item" data-endpoint="me">
+                <span class="method-badge method-get">GET</span> Get User
+            </div>
+            <div class="nav-item" data-endpoint="listening-sessions">
+                <span class="method-badge method-get">GET</span> Listening Sessions
+            </div>
+        </div>
+
+        <div class="nav-section">
+            <h3>Search</h3>
+            <div class="nav-item" data-endpoint="search">
+                <span class="method-badge method-get">GET</span> Search Library
+            </div>
+        </div>
+
+        <div class="nav-section">
+            <h3>Reference</h3>
+            <div class="nav-item" data-endpoint="full-docs">
+                📚 Full Official Docs
+            </div>
+        </div>
+    </div>
+
+    <div class="content">
+        <!-- Authentication -->
+        <div class="endpoint" data-id="auth">
+            <h2>Login / Authentication</h2>
+            <div class="endpoint-path">
+                <span class="method-badge method-post">POST</span> /login
+            </div>
+
+            <div class="section">
+                <h3>Request Body</h3>
+                <table class="param-table">
+                    <thead>
+                        <tr>
+                            <th>Parameter</th>
+                            <th>Type</th>
+                            <th>Required</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>username</code></td>
+                            <td>string</td>
+                            <td>Yes</td>
+                            <td>Your Audiobookshelf username</td>
+                        </tr>
+                        <tr>
+                            <td><code>password</code></td>
+                            <td>string</td>
+                            <td>Yes</td>
+                            <td>Your Audiobookshelf password</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="section">
+                <h3>Example Request</h3>
+                <div class="code-block">
+                    <pre>POST https://your-server.com/login
+Content-Type: application/json
+
+{
+  "username": "your_username",
+  "password": "your_password"
+}</pre>
+                </div>
+            </div>
+
+            <div class="section">
+                <h3>Response</h3>
+                <div class="code-block">
+                    <pre>{
+  "user": {
+    "id": "user_id",
+    "username": "your_username",
+    "token": "your_api_token",
+    ...
+  }
+}</pre>
+                </div>
+            </div>
+
+            <div class="note">
+                💡 Save the <code>token</code> from the response and use it in the <code>Authorization: Bearer {token}</code> header for all subsequent requests.
+            </div>
+        </div>
+
+        <!-- Get Libraries -->
+        <div class="endpoint" data-id="libraries">
+            <h2>Get Libraries</h2>
+            <div class="endpoint-path">
+                <span class="method-badge method-get">GET</span> /api/libraries
+            </div>
+
+            <div class="section">
+                <h3>Headers</h3>
+                <table class="param-table">
+                    <thead>
+                        <tr>
+                            <th>Header</th>
+                            <th>Value</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>Authorization</code></td>
+                            <td>Bearer {your_token}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="section">
+                <h3>Response</h3>
+                <div class="code-block">
+                    <pre>{
+  "libraries": [
+    {
+      "id": "lib_xxx",
+      "name": "Audiobooks",
+      "mediaType": "book",
+      "folders": [...],
+      "displayOrder": 1,
+      ...
+    }
+  ]
+}</pre>
+                </div>
+            </div>
+        </div>
+
+        <!-- Get Library Items -->
+        <div class="endpoint" data-id="library-items">
+            <h2>Get Library Items</h2>
+            <div class="endpoint-path">
+                <span class="method-badge method-get">GET</span> /api/libraries/{id}/items
+            </div>
+
+            <div class="section">
+                <h3>Path Parameters</h3>
+                <table class="param-table">
+                    <thead>
+                        <tr>
+                            <th>Parameter</th>
+                            <th>Type</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>id</code></td>
+                            <td>string</td>
+                            <td>Library ID</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="section">
+                <h3>Query Parameters</h3>
+                <table class="param-table">
+                    <thead>
+                        <tr>
+                            <th>Parameter</th>
+                            <th>Type</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>limit</code></td>
+                            <td>integer</td>
+                            <td>Number of items to return (default: 20)</td>
+                        </tr>
+                        <tr>
+                            <td><code>page</code></td>
+                            <td>integer</td>
+                            <td>Page number (default: 0)</td>
+                        </tr>
+                        <tr>
+                            <td><code>sort</code></td>
+                            <td>string</td>
+                            <td>Sort by: media.metadata.title, addedAt, etc.</td>
+                        </tr>
+                        <tr>
+                            <td><code>desc</code></td>
+                            <td>boolean</td>
+                            <td>Sort descending (0 or 1)</td>
+                        </tr>
+                        <tr>
+                            <td><code>filter</code></td>
+                            <td>string</td>
+                            <td>Filter query (e.g., "progress.isFinished")</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="section">
+                <h3>Example Request</h3>
+                <div class="code-block">
+                    <pre>GET /api/libraries/lib_xxx/items?limit=50&sort=addedAt&desc=1
+Authorization: Bearer {your_token}</pre>
+                </div>
+            </div>
+        </div>
+
+        <!-- Get Item -->
+        <div class="endpoint" data-id="get-item">
+            <h2>Get Library Item</h2>
+            <div class="endpoint-path">
+                <span class="method-badge method-get">GET</span> /api/items/{id}
+            </div>
+
+            <div class="section">
+                <h3>Path Parameters</h3>
+                <table class="param-table">
+                    <thead>
+                        <tr>
+                            <th>Parameter</th>
+                            <th>Type</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>id</code></td>
+                            <td>string</td>
+                            <td>Library Item ID</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="section">
+                <h3>Query Parameters</h3>
+                <table class="param-table">
+                    <thead>
+                        <tr>
+                            <th>Parameter</th>
+                            <th>Type</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>expanded</code></td>
+                            <td>integer</td>
+                            <td>Include expanded data (0 or 1)</td>
+                        </tr>
+                        <tr>
+                            <td><code>include</code></td>
+                            <td>string</td>
+                            <td>Comma-separated: progress, rssfeed, downloads</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="section">
+                <h3>Response Structure</h3>
+                <div class="code-block">
+                    <pre>{
+  "id": "li_xxx",
+  "libraryId": "lib_xxx",
+  "media": {
+    "metadata": {
+      "title": "Book Title",
+      "author": "Author Name",
+      "narrator": "Narrator Name",
+      ...
+    },
+    "audioFiles": [...],
+    "chapters": [...],
+    "libraryFiles": [
+      {
+        "ino": "xxx",
+        "fileType": "ebook",
+        "metadata": {
+          "filename": "book.epub",
+          "ext": ".epub"
+        }
+      }
+    ]
+  },
+  "userMediaProgress": {...}
+}</pre>
+                </div>
+            </div>
+        </div>
+
+        <!-- Start Playback -->
+        <div class="endpoint" data-id="play">
+            <h2>Start Playback Session</h2>
+            <div class="endpoint-path">
+                <span class="method-badge method-post">POST</span> /api/items/{id}/play
+            </div>
+
+            <div class="section">
+                <h3>Request Body</h3>
+                <table class="param-table">
+                    <thead>
+                        <tr>
+                            <th>Parameter</th>
+                            <th>Type</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>deviceInfo</code></td>
+                            <td>object</td>
+                            <td>Device information (deviceId, clientName, etc.)</td>
+                        </tr>
+                        <tr>
+                            <td><code>forceDirectPlay</code></td>
+                            <td>boolean</td>
+                            <td>Force direct play (no transcoding)</td>
+                        </tr>
+                        <tr>
+                            <td><code>forceTranscode</code></td>
+                            <td>boolean</td>
+                            <td>Force transcoding</td>
+                        </tr>
+                        <tr>
+                            <td><code>mediaPlayer</code></td>
+                            <td>string</td>
+                            <td>Media player identifier</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="section">
+                <h3>Example Request</h3>
+                <div class="code-block">
+                    <pre>POST /api/items/li_xxx/play
+Authorization: Bearer {your_token}
+Content-Type: application/json
+
+{
+  "deviceInfo": {
+    "deviceId": "swiftshelf_tvos",
+    "clientName": "SwiftShelf",
+    "clientVersion": "1.0.0"
+  },
+  "forceDirectPlay": true,
+  "mediaPlayer": "html5"
+}</pre>
+                </div>
+            </div>
+
+            <div class="section">
+                <h3>Response</h3>
+                <div class="code-block">
+                    <pre>{
+  "id": "play_session_id",
+  "userId": "user_id",
+  "libraryItemId": "li_xxx",
+  "audioTracks": [
+    {
+      "index": 1,
+      "startOffset": 0,
+      "duration": 3600,
+      "title": "Chapter 1",
+      "contentUrl": "/s/item/li_xxx/file_id?token=xxx"
+    }
+  ],
+  "startTime": 0
+}</pre>
+                </div>
+            </div>
+        </div>
+
+        <!-- Update Progress -->
+        <div class="endpoint" data-id="progress">
+            <h2>Update Playback Progress</h2>
+            <div class="endpoint-path">
+                <span class="method-badge method-patch">PATCH</span> /api/me/progress/{id}
+            </div>
+
+            <div class="section">
+                <h3>Path Parameters</h3>
+                <table class="param-table">
+                    <thead>
+                        <tr>
+                            <th>Parameter</th>
+                            <th>Type</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>id</code></td>
+                            <td>string</td>
+                            <td>Library Item ID</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="section">
+                <h3>Request Body</h3>
+                <table class="param-table">
+                    <thead>
+                        <tr>
+                            <th>Parameter</th>
+                            <th>Type</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>currentTime</code></td>
+                            <td>number</td>
+                            <td>Current playback position in seconds</td>
+                        </tr>
+                        <tr>
+                            <td><code>duration</code></td>
+                            <td>number</td>
+                            <td>Total duration in seconds</td>
+                        </tr>
+                        <tr>
+                            <td><code>isFinished</code></td>
+                            <td>boolean</td>
+                            <td>Whether playback is finished</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="section">
+                <h3>Example Request</h3>
+                <div class="code-block">
+                    <pre>PATCH /api/me/progress/li_xxx
+Authorization: Bearer {your_token}
+Content-Type: application/json
+
+{
+  "currentTime": 1234.5,
+  "duration": 10800,
+  "isFinished": false
+}</pre>
+                </div>
+            </div>
+        </div>
+
+        <!-- Get Ebook -->
+        <div class="endpoint" data-id="ebook">
+            <h2>Get Ebook File</h2>
+            <div class="endpoint-path">
+                <span class="method-badge method-get">GET</span> /api/items/{id}/ebook/{ino}
+            </div>
+
+            <div class="section">
+                <h3>Path Parameters</h3>
+                <table class="param-table">
+                    <thead>
+                        <tr>
+                            <th>Parameter</th>
+                            <th>Type</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>id</code></td>
+                            <td>string</td>
+                            <td>Library Item ID</td>
+                        </tr>
+                        <tr>
+                            <td><code>ino</code></td>
+                            <td>string</td>
+                            <td>File inode from libraryFiles array</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="section">
+                <h3>Headers</h3>
+                <table class="param-table">
+                    <thead>
+                        <tr>
+                            <th>Header</th>
+                            <th>Value</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>Authorization</code></td>
+                            <td>Bearer {your_token}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="section">
+                <h3>Response</h3>
+                <p>Returns the ebook file data (EPUB, PDF, etc.) as binary data.</p>
+            </div>
+
+            <div class="note">
+                💡 Find the <code>ino</code> in the item's <code>media.libraryFiles</code> array where <code>fileType === "ebook"</code>
+            </div>
+        </div>
+
+        <!-- Get User -->
+        <div class="endpoint" data-id="me">
+            <h2>Get Current User</h2>
+            <div class="endpoint-path">
+                <span class="method-badge method-get">GET</span> /api/me
+            </div>
+
+            <div class="section">
+                <h3>Response</h3>
+                <div class="code-block">
+                    <pre>{
+  "id": "user_id",
+  "username": "username",
+  "type": "user",
+  "token": "your_token",
+  "mediaProgress": [...],
+  "seriesHideFromContinueListening": [...],
+  "bookmarks": [...],
+  "isActive": true,
+  "isLocked": false,
+  "lastSeen": 1234567890,
+  "permissions": {...},
+  "librariesAccessible": [...],
+  "itemTagsAccessible": [...]
+}</pre>
+                </div>
+            </div>
+        </div>
+
+        <!-- Listening Sessions -->
+        <div class="endpoint" data-id="listening-sessions">
+            <h2>Get Listening Sessions</h2>
+            <div class="endpoint-path">
+                <span class="method-badge method-get">GET</span> /api/me/listening-sessions
+            </div>
+
+            <div class="section">
+                <h3>Query Parameters</h3>
+                <table class="param-table">
+                    <thead>
+                        <tr>
+                            <th>Parameter</th>
+                            <th>Type</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>itemsPerPage</code></td>
+                            <td>integer</td>
+                            <td>Number of sessions per page</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Search -->
+        <div class="endpoint" data-id="search">
+            <h2>Search Library</h2>
+            <div class="endpoint-path">
+                <span class="method-badge method-get">GET</span> /api/libraries/{id}/search
+            </div>
+
+            <div class="section">
+                <h3>Query Parameters</h3>
+                <table class="param-table">
+                    <thead>
+                        <tr>
+                            <th>Parameter</th>
+                            <th>Type</th>
+                            <th>Required</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>q</code></td>
+                            <td>string</td>
+                            <td>Yes</td>
+                            <td>Search query</td>
+                        </tr>
+                        <tr>
+                            <td><code>limit</code></td>
+                            <td>integer</td>
+                            <td>No</td>
+                            <td>Max results (default: 12)</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="section">
+                <h3>Example Request</h3>
+                <div class="code-block">
+                    <pre>GET /api/libraries/lib_xxx/search?q=harry%20potter&limit=20
+Authorization: Bearer {your_token}</pre>
+                </div>
+            </div>
+
+            <div class="section">
+                <h3>Response Structure</h3>
+                <div class="code-block">
+                    <pre>{
+  "book": [...],        // Matching books
+  "narrators": [...],   // Matching narrators
+  "authors": [...],     // Matching authors
+  "series": [...],      // Matching series
+  "tags": [...]         // Matching tags
+}</pre>
+                </div>
+            </div>
+        </div>
+
+        <!-- Full Docs Link -->
+        <div class="endpoint" data-id="full-docs">
+            <h2>Full Official Documentation</h2>
+            <p style="margin-bottom: 20px;">This is a quick reference for the most commonly used endpoints in SwiftShelf. For complete documentation of all endpoints, schemas, and advanced features:</p>
+
+            <a href="https://api.audiobookshelf.org/" target="_blank" class="iframe-link">
+                📚 Open Full Audiobookshelf API Documentation
+            </a>
+
+            <div class="note" style="margin-top: 20px;">
+                ⚠️ Note: The official documentation may be out of date. This local reference covers the endpoints actively used in SwiftShelf and is kept up to date with the current implementation.
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Navigation
+        const navItems = document.querySelectorAll('.nav-item');
+        const endpoints = document.querySelectorAll('.endpoint');
+        const searchBox = document.getElementById('searchBox');
+
+        navItems.forEach(item => {
+            item.addEventListener('click', () => {
+                const targetId = item.dataset.endpoint;
+
+                // Update active nav item
+                navItems.forEach(nav => nav.classList.remove('active'));
+                item.classList.add('active');
+
+                // Show target endpoint
+                endpoints.forEach(endpoint => {
+                    endpoint.classList.remove('active');
+                    if (endpoint.dataset.id === targetId) {
+                        endpoint.classList.add('active');
+                    }
+                });
+            });
+        });
+
+        // Search functionality
+        searchBox.addEventListener('input', (e) => {
+            const query = e.target.value.toLowerCase();
+
+            navItems.forEach(item => {
+                const text = item.textContent.toLowerCase();
+                if (text.includes(query)) {
+                    item.style.display = 'block';
+                } else {
+                    item.style.display = 'none';
+                }
+            });
+        });
+
+        // Show first endpoint by default
+        if (navItems.length > 0) {
+            navItems[0].click();
+        }
+    </script>
+</body>
+</html>

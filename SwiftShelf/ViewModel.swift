@@ -526,16 +526,16 @@ extension ViewModel {
         }
     }
 
-    // MARK: - Session Management
+    // MARK: - Session Management (Canonical ABS API)
 
-    /// Start/open a playback session
+    /// Start playback session using canonical /api/items/{id}/play endpoint
     /// - Parameters:
     ///   - item: The library item
-    ///   - deviceInfo: Optional device information
-    /// - Returns: Session ID if successful
-    func startSession(for item: LibraryItem, deviceInfo: [String: Any]? = nil) async -> String? {
+    ///   - episodeId: Optional episode ID for podcasts
+    /// - Returns: Session ID and audio tracks if successful
+    func startPlaybackSession(for item: LibraryItem, episodeId: String? = nil) async -> (sessionId: String, tracks: [PlaybackTrack])? {
         guard !host.isEmpty, !apiKey.isEmpty else {
-            print("[ViewModel] Cannot start session: missing host or API key")
+            print("[ViewModel] Cannot start playback: missing host or API key")
             return nil
         }
 
@@ -544,21 +544,31 @@ extension ViewModel {
             return nil
         }
 
-        components.path = "/api/session/local"
+        // Build path: /api/items/{id}/play or /api/items/{id}/play/{episodeId}
+        if let episodeId = episodeId {
+            components.path = "/api/items/\(item.id)/play/\(episodeId)"
+        } else {
+            components.path = "/api/items/\(item.id)/play"
+        }
 
         guard let url = components.url else {
-            print("[ViewModel] Failed to construct session URL")
+            print("[ViewModel] Failed to construct playback URL")
             return nil
         }
 
+        // Prepare device info
+        let deviceInfo: [String: Any] = [
+            "deviceId": UIDevice.current.identifierForVendor?.uuidString ?? "unknown-device",
+            "clientVersion": "SwiftShelf/1.0.0",
+            "clientName": "SwiftShelf",
+            "platform": "tvOS",
+            "model": UIDevice.current.model,
+            "deviceName": UIDevice.current.name
+        ]
+
         let payload: [String: Any] = [
-            "libraryItemId": item.id,
-            "deviceInfo": deviceInfo ?? [
-                "deviceId": UIDevice.current.identifierForVendor?.uuidString ?? "unknown",
-                "clientName": "SwiftShelf",
-                "deviceName": UIDevice.current.name
-            ],
-            "startedAt": Int(Date().timeIntervalSince1970 * 1000)
+            "deviceInfo": deviceInfo,
+            "supportedMimeTypes": ["audio/mpeg", "audio/mp4", "audio/flac", "audio/x-m4a", "audio/aac"]
         ]
 
         var request = URLRequest(url: url)
@@ -568,47 +578,37 @@ extension ViewModel {
 
         do {
             request.httpBody = try JSONSerialization.data(withJSONObject: payload)
-            APILogger.logRequest(request, description: "Start Session")
+            APILogger.logRequest(request, description: "Start Playback Session")
 
             let (data, response) = try await URLSession.shared.data(for: request)
-            APILogger.logResponse(data, response, description: "Start Session")
+            APILogger.logResponse(data, response, description: "Start Playback Session")
 
             if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 {
-                // Try to parse JSON response
-                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                    if let sessionId = json["id"] as? String {
-                        print("[ViewModel] Session started with ID from JSON: \(sessionId)")
-                        return sessionId
-                    }
-                    print("[ViewModel] Session JSON response: \(json)")
-                }
+                let decoder = JSONDecoder()
+                decoder.keyDecodingStrategy = .convertFromSnakeCase
 
-                // If response is just "OK", try to get session ID from response body as string
-                if let bodyString = String(data: data, encoding: .utf8) {
-                    print("[ViewModel] Session response body: \(bodyString)")
-                    // Check if it's a plain session ID
-                    if bodyString != "OK" && !bodyString.isEmpty {
-                        print("[ViewModel] Using response body as session ID: \(bodyString)")
-                        return bodyString
-                    }
+                if let playResponse = try? decoder.decode(PlaybackSessionResponse.self, from: data) {
+                    print("[ViewModel] ✅ Playback session started: \(playResponse.id)")
+                    print("[ViewModel] 📊 Tracks: \(playResponse.audioTracks.count), Duration: \(playResponse.duration ?? 0)s")
+                    return (playResponse.id, playResponse.audioTracks)
                 }
-
-                print("[ViewModel] ⚠️ Session started but no session ID in response")
+            } else if let httpResponse = response as? HTTPURLResponse {
+                print("[ViewModel] ❌ Start playback failed: \(httpResponse.statusCode)")
             }
         } catch {
-            APILogger.logError(error, description: "Start Session")
+            APILogger.logError(error, description: "Start Playback Session")
         }
 
         return nil
     }
 
-    /// Sync/update an open session
+    /// Sync session with delta timeListened (canonical)
     /// - Parameters:
     ///   - sessionId: The session ID
-    ///   - currentTime: Current playback position
-    ///   - duration: Total duration
-    ///   - timeListened: Actual time listened (optional, defaults to currentTime)
-    func syncSession(sessionId: String, currentTime: Double, duration: Double, timeListened: Double? = nil) async {
+    ///   - currentTime: Current playback position in seconds
+    ///   - timeListened: Delta time listened since last sync (NOT cumulative)
+    ///   - duration: Total duration in seconds
+    func syncSession(sessionId: String, currentTime: Double, timeListened: Double, duration: Double) async {
         guard !host.isEmpty, !apiKey.isEmpty else { return }
 
         guard var components = URLComponents(string: host) else { return }
@@ -616,10 +616,11 @@ extension ViewModel {
 
         guard let url = components.url else { return }
 
+        // Round to 2 decimals to avoid micro-jitter
         let payload: [String: Any] = [
-            "currentTime": currentTime,
-            "duration": duration,
-            "timeListened": timeListened ?? currentTime
+            "currentTime": round(currentTime * 100) / 100,
+            "timeListened": round(timeListened * 100) / 100,
+            "duration": round(duration * 100) / 100
         ]
 
         var request = URLRequest(url: url)
@@ -629,6 +630,10 @@ extension ViewModel {
 
         do {
             request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+
+            #if DEBUG
+            print("[ViewModel] 📤 Syncing session: currentTime=\(currentTime)s, timeListened=\(timeListened)s")
+            #endif
 
             APILogger.logRequest(request, description: "Sync Session")
 
@@ -637,37 +642,60 @@ extension ViewModel {
             APILogger.logResponse(data, response, description: "Sync Session")
 
             if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 {
-                print("[ViewModel] Session synced: \(sessionId)")
+                #if DEBUG
+                print("[ViewModel] ✅ Session synced: \(sessionId)")
+                #endif
             } else if let httpResponse = response as? HTTPURLResponse {
-                print("[ViewModel] Session sync failed: \(httpResponse.statusCode)")
+                print("[ViewModel] ❌ Session sync failed: \(httpResponse.statusCode)")
             }
         } catch {
-            print("[ViewModel] Session sync failed: \(error)")
+            print("[ViewModel] ❌ Session sync error: \(error)")
         }
     }
 
-    /// Close a playback session
-    /// - Parameter sessionId: The session ID
-    func closeSession(sessionId: String) async {
+    /// Close playback session using canonical /api/session/{id}/close endpoint
+    /// - Parameters:
+    ///   - sessionId: The session ID
+    ///   - currentTime: Final playback position (optional)
+    ///   - timeListened: Final delta time listened (optional)
+    ///   - duration: Total duration (optional)
+    func closeSession(sessionId: String, currentTime: Double? = nil, timeListened: Double? = nil, duration: Double? = nil) async {
         guard !host.isEmpty, !apiKey.isEmpty else { return }
 
         guard var components = URLComponents(string: host) else { return }
-        components.path = "/api/session/local/\(sessionId)"
+        components.path = "/api/session/\(sessionId)/close"
 
         guard let url = components.url else { return }
 
         var request = URLRequest(url: url)
-        request.httpMethod = "DELETE"
+        request.httpMethod = "POST"
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        // Include final state if provided
+        if let currentTime = currentTime, let duration = duration {
+            let payload: [String: Any] = [
+                "currentTime": round(currentTime * 100) / 100,
+                "timeListened": round((timeListened ?? 0) * 100) / 100,
+                "duration": round(duration * 100) / 100
+            ]
+            request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+        }
 
         do {
-            let (_, response) = try await URLSession.shared.data(for: request)
+            APILogger.logRequest(request, description: "Close Session")
+
+            let (data, response) = try await URLSession.shared.data(for: request)
+
+            APILogger.logResponse(data, response, description: "Close Session")
 
             if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 {
-                print("[ViewModel] Session closed: \(sessionId)")
+                print("[ViewModel] ✅ Session closed: \(sessionId)")
+            } else if let httpResponse = response as? HTTPURLResponse {
+                print("[ViewModel] ❌ Close session failed: \(httpResponse.statusCode)")
             }
         } catch {
-            print("[ViewModel] Close session failed: \(error)")
+            print("[ViewModel] ❌ Close session error: \(error)")
         }
     }
 

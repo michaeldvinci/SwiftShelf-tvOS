@@ -39,9 +39,9 @@ struct EPUBReaderView: View {
     private let sepiaText = Color(red: 0.27, green: 0.22, blue: 0.17)
 
     // Page dimensions for pagination
-    private let pageHeight: CGFloat = 900  // Available height for text
-    private let lineHeight: CGFloat = 26   // Font size 18 + line spacing 4 + some padding
-    private let charsPerLine: Int = 80     // Approximate characters per line
+    private let pageHeight: CGFloat = 800  // Available height for text (reduced to account for page number)
+    private let lineHeight: CGFloat = 30   // Font size 18 + line spacing 4 + extra padding (more conservative)
+    private let charsPerLine: Int = 70     // Approximate characters per line (more conservative)
 
     var body: some View {
         ZStack {
@@ -207,29 +207,19 @@ struct EPUBReaderView: View {
                         if tocChapters.isEmpty {
                             // Fallback to sections if no TOC
                             ForEach(Array(chapters.enumerated()), id: \.offset) { index, chapter in
-                                Button {
-                                    navigateToSpineItem(index)
-                                    showChapterMenu = false
-                                } label: {
-                                    HStack {
-                                        VStack(alignment: .leading, spacing: 4) {
-                                            Text("Section \(index + 1)")
-                                                .font(.headline)
-                                                .foregroundColor(sepiaText)
-
-                                            let plainText = HTMLParser.htmlToPlainText(chapter.htmlContent)
-                                            let preview = plainText.prefix(60).replacingOccurrences(of: "\n", with: " ")
-                                            Text(preview + "...")
-                                                .font(.caption)
-                                                .foregroundColor(sepiaText.opacity(0.6))
-                                                .lineLimit(2)
-                                        }
-                                        Spacer()
+                                ChapterRow(
+                                    title: "Section \(index + 1)",
+                                    subtitle: {
+                                        let plainText = HTMLParser.htmlToPlainText(chapter.htmlContent)
+                                        let preview = plainText.prefix(60).replacingOccurrences(of: "\n", with: " ")
+                                        return preview + "..."
+                                    }(),
+                                    sepiaText: sepiaText,
+                                    onTap: {
+                                        navigateToSpineItem(index)
+                                        showChapterMenu = false
                                     }
-                                    .padding()
-                                    .background(Color.clear)
-                                }
-                                .buttonStyle(.plain)
+                                )
 
                                 Divider()
                                     .background(sepiaText.opacity(0.1))
@@ -237,28 +227,15 @@ struct EPUBReaderView: View {
                         } else {
                             // Use actual TOC chapters
                             ForEach(Array(tocChapters.enumerated()), id: \.offset) { index, tocChapter in
-                                Button {
-                                    navigateToTOCChapter(tocChapter)
-                                    showChapterMenu = false
-                                } label: {
-                                    HStack {
-                                        VStack(alignment: .leading, spacing: 4) {
-                                            Text(tocChapter.title)
-                                                .font(.headline)
-                                                .foregroundColor(sepiaText)
-
-                                            if let pageNum = spineToPageMap[tocChapter.href] {
-                                                Text("Page \(pageNum + 1)")
-                                                    .font(.caption)
-                                                    .foregroundColor(sepiaText.opacity(0.5))
-                                            }
-                                        }
-                                        Spacer()
+                                ChapterRow(
+                                    title: tocChapter.title,
+                                    subtitle: spineToPageMap[tocChapter.href].map { "Page \($0 + 1)" },
+                                    sepiaText: sepiaText,
+                                    onTap: {
+                                        navigateToTOCChapter(tocChapter)
+                                        showChapterMenu = false
                                     }
-                                    .padding()
-                                    .background(Color.clear)
-                                }
-                                .buttonStyle(.plain)
+                                )
 
                                 Divider()
                                     .background(sepiaText.opacity(0.1))
@@ -277,9 +254,6 @@ struct EPUBReaderView: View {
             // Darkened background overlay
             Color.black.opacity(0.5)
                 .edgesIgnoringSafeArea(.all)
-                .onTapGesture {
-                    showChapterMenu = false
-                }
 
             // Centered menu
             menuContent
@@ -308,14 +282,16 @@ struct EPUBReaderView: View {
             }
         } else if pageNumber < totalPages {
             VStack(spacing: 0) {
-                // Page content
+                // Page content with fixed height to prevent overflow
                 Text(paginatedPages[pageNumber])
                     .font(.system(size: 18))
                     .foregroundColor(sepiaText)
                     .lineSpacing(4)
                     .padding(.horizontal, 30)
                     .padding(.top, 20)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .frame(height: pageHeight)  // Fixed height matching pagination calculation
+                    .clipped()  // Clip any overflow
 
                 // Page number at bottom
                 Text("\(pageNumber + 1)")
@@ -507,5 +483,40 @@ struct EPUBReaderView: View {
     private func nextPage() {
         guard currentPage < totalPages - 1 else { return }
         currentPage += 2  // Move forward 2 pages (one spread)
+    }
+}
+
+// MARK: - Chapter Row Component
+private struct ChapterRow: View {
+    let title: String
+    let subtitle: String?
+    let sepiaText: Color
+    let onTap: () -> Void
+
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.headline)
+                        .foregroundColor(isFocused ? .white : sepiaText)
+
+                    if let subtitle = subtitle {
+                        Text(subtitle)
+                            .font(.caption)
+                            .foregroundColor(isFocused ? .white.opacity(0.7) : sepiaText.opacity(0.5))
+                            .lineLimit(2)
+                    }
+                }
+                Spacer()
+            }
+            .padding()
+            .background(isFocused ? sepiaText : Color.clear)
+            .cornerRadius(8)
+        }
+        .buttonStyle(.plain)
+        .focused($isFocused)
     }
 }

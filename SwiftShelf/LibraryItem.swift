@@ -196,3 +196,32 @@ extension LibraryItem {
         ebookFile != nil
     }
 }
+
+// MARK: - Playback Session Response Types
+
+/// Response from /api/items/{id}/play endpoint
+struct PlaybackSessionResponse: Codable {
+    let id: String                      // Session ID (e.g., "play_abc123...")
+    let audioTracks: [PlaybackTrack]
+    let duration: Double?
+    let libraryItemId: String
+    let episodeId: String?
+
+    // Additional fields that may be present
+    let startTime: String?
+    let currentTime: Double?
+}
+
+/// Track information from playback session
+struct PlaybackTrack: Codable {
+    let contentUrl: String              // Stream URL path
+    let mimeType: String
+    let duration: Double?
+    let metadata: PlaybackTrackMetadata?
+
+    struct PlaybackTrackMetadata: Codable {
+        let filename: String?
+        let ext: String?
+        let path: String?
+    }
+}
