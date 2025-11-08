@@ -159,7 +159,32 @@ final class GlobalAudioManager: NSObject, ObservableObject {
     
     func togglePlayPause() {
         print("[GlobalAudioManager] ⏯️ Toggle play/pause requested")
+
+        // Check current state before toggle
+        let wasPlaying = isPlaying
+
         playerViewModel?.togglePlayPause()
+
+        // Wait a moment for the state to update, then handle timers
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            guard let self = self else { return }
+
+            if self.isPlaying && !wasPlaying {
+                // Transitioned from paused to playing
+                print("[GlobalAudioManager] ▶️ Resumed from pause - restarting timers")
+                self.startPeriodicTimers()
+
+                // Start session if needed
+                if self.currentSessionId == nil {
+                    self.startPlaybackSession()
+                }
+            } else if !self.isPlaying && wasPlaying {
+                // Transitioned from playing to paused
+                print("[GlobalAudioManager] ⏸️ Paused - stopping timers and saving")
+                self.stopPeriodicTimers()
+                self.saveProgressAndSyncSession()
+            }
+        }
     }
     
     func seek(to seconds: Double) {
