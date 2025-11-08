@@ -587,13 +587,23 @@ extension ViewModel {
                 let decoder = JSONDecoder()
                 decoder.keyDecodingStrategy = .convertFromSnakeCase
 
-                if let playResponse = try? decoder.decode(PlaybackSessionResponse.self, from: data) {
+                // Try to decode the response
+                do {
+                    let playResponse = try decoder.decode(PlaybackSessionResponse.self, from: data)
                     print("[ViewModel] ✅ Playback session started: \(playResponse.id)")
                     print("[ViewModel] 📊 Tracks: \(playResponse.audioTracks.count), Duration: \(playResponse.duration ?? 0)s")
                     return (playResponse.id, playResponse.audioTracks)
+                } catch {
+                    print("[ViewModel] ❌ Failed to decode PlaybackSessionResponse: \(error)")
+                    if let jsonString = String(data: data, encoding: .utf8) {
+                        print("[ViewModel] 📄 Raw response: \(jsonString)")
+                    }
                 }
             } else if let httpResponse = response as? HTTPURLResponse {
                 print("[ViewModel] ❌ Start playback failed: \(httpResponse.statusCode)")
+                if let jsonString = String(data: data, encoding: .utf8) {
+                    print("[ViewModel] 📄 Error response: \(jsonString)")
+                }
             }
         } catch {
             APILogger.logError(error, description: "Start Playback Session")
@@ -696,6 +706,34 @@ extension ViewModel {
             }
         } catch {
             print("[ViewModel] ❌ Close session error: \(error)")
+        }
+    }
+
+    /// Diagnostic: Fetch recent listening sessions
+    func fetchListeningSessions(limit: Int = 10) async {
+        guard !host.isEmpty, !apiKey.isEmpty else { return }
+
+        guard var components = URLComponents(string: host) else { return }
+        components.path = "/api/me/listening-sessions"
+        components.queryItems = [
+            URLQueryItem(name: "itemsPerPage", value: "\(limit)"),
+            URLQueryItem(name: "page", value: "0")
+        ]
+
+        guard let url = components.url else { return }
+
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 {
+                if let jsonString = String(data: data, encoding: .utf8) {
+                    print("[ViewModel] 📊 Listening sessions: \(jsonString)")
+                }
+            }
+        } catch {
+            print("[ViewModel] ❌ Failed to fetch listening sessions: \(error)")
         }
     }
 

@@ -204,12 +204,23 @@ struct PlaybackSessionResponse: Codable {
     let id: String                      // Session ID (e.g., "play_abc123...")
     let audioTracks: [PlaybackTrack]
     let duration: Double?
-    let libraryItemId: String
+    let libraryItemId: String?
     let episodeId: String?
 
     // Additional fields that may be present
     let startTime: String?
     let currentTime: Double?
+    let userId: String?
+    let libraryId: String?
+    let bookId: String?
+    let mediaType: String?
+    let displayTitle: String?
+    let serverVersion: String?
+    let date: String?
+    let dayOfWeek: String?
+    let timeListening: Double?
+    let startedAt: Double?
+    let updatedAt: Double?
 }
 
 /// Track information from playback session

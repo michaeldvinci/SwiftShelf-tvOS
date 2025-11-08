@@ -125,6 +125,7 @@ final class GlobalAudioManager: NSObject, ObservableObject {
         print("[GlobalAudioManager] currentItem: \(currentItem?.title ?? "nil")")
         print("[GlobalAudioManager] currentItem.id: \(currentItem?.id ?? "nil")")
         print("[GlobalAudioManager] currentItem.duration: \(currentItem?.duration.map { String($0) } ?? "nil")")
+        print("[GlobalAudioManager] currentSessionId: \(currentSessionId ?? "nil")")
         print("===========================================")
 
         // Apply cached resume position if this is the first play
@@ -141,7 +142,10 @@ final class GlobalAudioManager: NSObject, ObservableObject {
 
         // Start playback session if not already started
         if currentSessionId == nil {
+            print("[GlobalAudioManager] 🚀 No session exists, starting playback session...")
             startPlaybackSession()
+        } else {
+            print("[GlobalAudioManager] ✅ Session already exists: \(currentSessionId!)")
         }
     }
 
@@ -155,6 +159,11 @@ final class GlobalAudioManager: NSObject, ObservableObject {
 
         // Save progress immediately when pausing (canonical flow)
         saveProgressAndSyncSession()
+
+        // Close the session when pausing (per ABS spec: new session for each play action)
+        Task {
+            await closeCurrentSession()
+        }
     }
     
     func togglePlayPause() {
@@ -172,6 +181,10 @@ final class GlobalAudioManager: NSObject, ObservableObject {
             if self.isPlaying && !wasPlaying {
                 // Transitioned from paused to playing
                 print("[GlobalAudioManager] ▶️ Resumed from pause - restarting timers")
+
+                // IMPORTANT: Reset lastSyncTime to prevent inflated delta on first sync after resume
+                self.lastSyncTime = Date()
+
                 self.startPeriodicTimers()
 
                 // Start session if needed
@@ -183,6 +196,11 @@ final class GlobalAudioManager: NSObject, ObservableObject {
                 print("[GlobalAudioManager] ⏸️ Paused - stopping timers and saving")
                 self.stopPeriodicTimers()
                 self.saveProgressAndSyncSession()
+
+                // Close session when pausing
+                Task {
+                    await self.closeCurrentSession()
+                }
             }
         }
     }
@@ -345,17 +363,27 @@ final class GlobalAudioManager: NSObject, ObservableObject {
 
     /// Start playback session using canonical /api/items/{id}/play
     private func startPlaybackSession() {
-        guard let item = currentItem else { return }
-        guard let appVM = appViewModel else { return }
+        guard let item = currentItem else {
+            print("[GlobalAudioManager] ❌ Cannot start session: no current item")
+            return
+        }
+        guard let appVM = appViewModel else {
+            print("[GlobalAudioManager] ❌ Cannot start session: no appViewModel")
+            return
+        }
+
+        print("[GlobalAudioManager] 🚀🚀🚀 STARTING PLAYBACK SESSION 🚀🚀🚀")
+        print("[GlobalAudioManager] Item: \(item.title)")
+        print("[GlobalAudioManager] Item ID: \(item.id)")
 
         Task {
             if let result = await appVM.startPlaybackSession(for: item) {
                 currentSessionId = result.sessionId
                 lastSyncTime = Date()
                 lastSyncPosition = currentTime
-                print("[GlobalAudioManager] ✅ Playback session started: \(result.sessionId)")
+                print("[GlobalAudioManager] ✅✅✅ Playback session started: \(result.sessionId)")
             } else {
-                print("[GlobalAudioManager] ❌ Failed to start playback session")
+                print("[GlobalAudioManager] ❌❌❌ Failed to start playback session")
             }
         }
     }
@@ -365,10 +393,21 @@ final class GlobalAudioManager: NSObject, ObservableObject {
         guard let sessionId = currentSessionId else { return }
         guard let appVM = appViewModel else { return }
         guard isPlaying else { return } // Only sync while playing
+        guard let item = currentItem else { return }
 
         let now = Date()
         let currentPosition = currentTime
-        let totalDuration = duration
+
+        // Use player duration, but fallback to item duration if player hasn't loaded yet
+        var totalDuration = duration
+        if totalDuration <= 0, let itemDuration = item.duration {
+            totalDuration = itemDuration
+        }
+
+        guard totalDuration > 0 else {
+            print("[GlobalAudioManager] ⚠️ Cannot sync session: duration is 0")
+            return
+        }
 
         // Calculate delta time listened since last sync
         let deltaTime: Double
@@ -398,9 +437,20 @@ final class GlobalAudioManager: NSObject, ObservableObject {
     private func syncSessionAfterSeek() async {
         guard let sessionId = currentSessionId else { return }
         guard let appVM = appViewModel else { return }
+        guard let item = currentItem else { return }
 
         let currentPosition = currentTime
-        let totalDuration = duration
+
+        // Use player duration, but fallback to item duration if player hasn't loaded yet
+        var totalDuration = duration
+        if totalDuration <= 0, let itemDuration = item.duration {
+            totalDuration = itemDuration
+        }
+
+        guard totalDuration > 0 else {
+            print("[GlobalAudioManager] ⚠️ Cannot sync after seek: duration is 0")
+            return
+        }
 
         print("[GlobalAudioManager] ⏩ Seek sync: pos=\(currentPosition)s, timeListened=0")
 
@@ -422,7 +472,18 @@ final class GlobalAudioManager: NSObject, ObservableObject {
         guard let appVM = appViewModel else { return }
 
         let currentPosition = currentTime
-        let totalDuration = duration
+
+        // Use player duration, but fallback to item duration if player hasn't loaded yet
+        var totalDuration = duration
+        if totalDuration <= 0, let itemDuration = item.duration {
+            totalDuration = itemDuration
+        }
+
+        // Still bail if we have no duration at all
+        guard totalDuration > 0 else {
+            print("[GlobalAudioManager] ⚠️ Cannot save progress: duration is 0")
+            return
+        }
 
         print("[GlobalAudioManager] 💾 Saving durable progress: \(currentPosition)s / \(totalDuration)s")
 
@@ -458,7 +519,12 @@ final class GlobalAudioManager: NSObject, ObservableObject {
         guard let appVM = appViewModel else { return }
 
         let currentPosition = currentTime
-        let totalDuration = duration
+
+        // Use player duration, but fallback to item duration if player hasn't loaded yet
+        var totalDuration = duration
+        if totalDuration <= 0, let itemDuration = currentItem?.duration {
+            totalDuration = itemDuration
+        }
 
         // Calculate final delta
         let deltaTime: Double
@@ -470,17 +536,27 @@ final class GlobalAudioManager: NSObject, ObservableObject {
 
         print("[GlobalAudioManager] 📝 Closing session with final state: pos=\(currentPosition)s, delta=\(deltaTime)s")
 
-        await appVM.closeSession(
-            sessionId: sessionId,
-            currentTime: currentPosition,
-            timeListened: deltaTime,
-            duration: totalDuration
-        )
+        // Only send duration if we have it; otherwise close without payload
+        if totalDuration > 0 {
+            await appVM.closeSession(
+                sessionId: sessionId,
+                currentTime: currentPosition,
+                timeListened: deltaTime,
+                duration: totalDuration
+            )
+        } else {
+            await appVM.closeSession(sessionId: sessionId)
+        }
 
         currentSessionId = nil
         lastSyncTime = nil
         lastSyncPosition = 0
         print("[GlobalAudioManager] ✅ Session closed")
+
+        // Diagnostic: Check if session was recorded
+        #if DEBUG
+        await appVM.fetchListeningSessions(limit: 5)
+        #endif
     }
 
     // MARK: - Periodic Timers

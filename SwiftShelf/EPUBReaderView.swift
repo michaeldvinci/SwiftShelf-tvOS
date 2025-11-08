@@ -22,6 +22,11 @@ struct EPUBReaderView: View {
     @State private var errorMessage: String?
     @State private var hasLoadedOnce = false  // Track if we've already loaded this book
 
+    // Audio sync state
+    @State private var audioSyncEnabled = false
+    @State private var audioSyncTimer: Timer?
+    @State private var chapterMapping: [Int: Int] = [:]  // Maps audio chapter index → EPUB TOC chapter index
+
     init(item: LibraryItem, ebookFile: LibraryItem.LibraryFile, showChapterMenu: Binding<Bool>) {
         self.item = item
         self.ebookFile = ebookFile
@@ -83,8 +88,15 @@ struct EPUBReaderView: View {
                 }
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .epubReaderSyncRequest)) { notification in
+            guard let id = notification.object as? String, id == String(describing: item.id) else { return }
+            syncWithAudioPosition()
+        }
         .task {
             await loadEbook()
+        }
+        .onDisappear {
+            stopAudioSync()
         }
         .onExitCommand {
             // Handle back button - close chapter menu if open
@@ -131,6 +143,24 @@ struct EPUBReaderView: View {
                 .focused($leftButtonFocused)
                 .disabled(currentPage <= 1)
                 .opacity(currentPage <= 1 ? 0.3 : 1.0)
+
+                Spacer()
+
+                // Audio sync toggle button
+                Button {
+                    audioSyncEnabled.toggle()
+                    if audioSyncEnabled {
+                        startAudioSync()
+                    } else {
+                        stopAudioSync()
+                    }
+                } label: {
+                    Image(systemName: audioSyncEnabled ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                        .font(.system(size: 20))
+                        .foregroundColor(audioSyncEnabled ? .green : sepiaText.opacity(0.5))
+                        .frame(width: 50, height: 50)
+                }
+                .buttonStyle(.plain)
 
                 Spacer()
 
@@ -467,6 +497,9 @@ struct EPUBReaderView: View {
 
             print("📖 Restored to page \(currentPage)")
 
+            // Build chapter mapping for audio sync
+            buildChapterMapping()
+
             isLoading = false
 
         } catch {
@@ -483,6 +516,145 @@ struct EPUBReaderView: View {
     private func nextPage() {
         guard currentPage < totalPages - 1 else { return }
         currentPage += 2  // Move forward 2 pages (one spread)
+    }
+
+    // MARK: - Audio Sync
+
+    /// Build mapping between audio chapters and EPUB chapters by matching titles
+    private func buildChapterMapping() {
+        guard !item.chapters.isEmpty, !tocChapters.isEmpty else {
+            print("[EPUBReader] ⚠️ Cannot build chapter mapping: audio chapters=\(item.chapters.count), EPUB chapters=\(tocChapters.count)")
+            return
+        }
+
+        var mapping: [Int: Int] = [:]
+
+        for (audioIdx, audioChapter) in item.chapters.enumerated() {
+            // Try to find matching EPUB chapter by title similarity
+            let audioTitle = audioChapter.title.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+
+            if let epubIdx = tocChapters.firstIndex(where: { tocChapter in
+                let epubTitle = tocChapter.title.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+                return epubTitle == audioTitle || epubTitle.contains(audioTitle) || audioTitle.contains(epubTitle)
+            }) {
+                mapping[audioIdx] = epubIdx
+                print("[EPUBReader] 📖 Mapped audio chapter \(audioIdx) '\(audioChapter.title)' → EPUB chapter \(epubIdx) '\(tocChapters[epubIdx].title)'")
+            }
+        }
+
+        chapterMapping = mapping
+        print("[EPUBReader] ✅ Built chapter mapping: \(mapping.count)/\(item.chapters.count) chapters matched")
+    }
+
+    /// Calculate EPUB page based on current audio playback position
+    private func calculatePageFromAudioPosition(audioPosition: Double, audioDuration: Double) -> Int? {
+        guard !item.chapters.isEmpty else { return nil }
+
+        // Find which audio chapter we're in
+        guard let currentAudioChapter = item.chapters.first(where: { chapter in
+            audioPosition >= chapter.start && audioPosition < chapter.end
+        }) else {
+            return nil
+        }
+
+        guard let audioChapterIndex = item.chapters.firstIndex(where: { $0.id == currentAudioChapter.id }) else {
+            return nil
+        }
+
+        // Get mapped EPUB chapter
+        guard let epubChapterIndex = chapterMapping[audioChapterIndex] else {
+            print("[EPUBReader] ⚠️ No EPUB chapter mapped for audio chapter \(audioChapterIndex)")
+            return nil
+        }
+
+        guard epubChapterIndex < tocChapters.count else { return nil }
+
+        let epubChapter = tocChapters[epubChapterIndex]
+
+        // Get start page of this EPUB chapter
+        guard let chapterStartPage = spineToPageMap[epubChapter.href] else {
+            print("[EPUBReader] ⚠️ No page found for EPUB chapter \(epubChapterIndex) href=\(epubChapter.href)")
+            return nil
+        }
+
+        // Calculate progress within current audio chapter (0.0 to 1.0)
+        let chapterDuration = currentAudioChapter.end - currentAudioChapter.start
+        let positionInChapter = audioPosition - currentAudioChapter.start
+        let chapterProgress = chapterDuration > 0 ? positionInChapter / chapterDuration : 0.0
+
+        // Estimate pages in this EPUB chapter (distance to next chapter or end of book)
+        let chapterEndPage: Int
+        if epubChapterIndex + 1 < tocChapters.count, let nextChapterPage = spineToPageMap[tocChapters[epubChapterIndex + 1].href] {
+            chapterEndPage = nextChapterPage
+        } else {
+            chapterEndPage = totalPages
+        }
+
+        let pagesInChapter = max(1, chapterEndPage - chapterStartPage)
+
+        // Calculate target page based on progress
+        let estimatedPage = chapterStartPage + Int(Double(pagesInChapter) * chapterProgress)
+        let clampedPage = max(0, min(estimatedPage, totalPages - 1))
+
+        print("[EPUBReader] 🎯 Audio: \(Int(audioPosition))s in '\(currentAudioChapter.title)' (\(Int(chapterProgress * 100))%) → EPUB page \(clampedPage)")
+
+        return clampedPage
+    }
+
+    /// Start audio sync timer
+    private func startAudioSync() {
+        stopAudioSync()
+
+        // Schedule on main run loop; avoid capturing `self` (a struct) weakly
+        audioSyncTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
+            EPUBReaderView.performAudioSync(forItemID: String(describing: item.id))
+        }
+        RunLoop.main.add(audioSyncTimer!, forMode: .common)
+
+        print("[EPUBReader] 🎵 Audio sync started")
+    }
+
+    /// Static helper to perform audio sync without capturing `self` in a Timer closure
+    private static func performAudioSync(forItemID itemID: String) {
+        let audioManager = GlobalAudioManager.shared
+        // Only proceed if playing the same item
+        guard audioManager.isPlaying, String(describing: audioManager.currentItem?.id ?? "") == itemID else { return }
+
+        NotificationCenter.default.post(name: .epubReaderSyncRequest, object: itemID)
+    }
+
+    /// Stop audio sync timer
+    private func stopAudioSync() {
+        audioSyncTimer?.invalidate()
+        audioSyncTimer = nil
+    }
+
+    /// Sync EPUB position with current audio position
+    private func syncWithAudioPosition() {
+        // Get current audio position from GlobalAudioManager
+        let audioManager = GlobalAudioManager.shared
+
+        guard audioManager.isPlaying else { return }
+        guard audioManager.currentItem?.id == item.id else { return }  // Only sync if same item
+
+        let audioPosition = audioManager.currentTime
+        let audioDuration = audioManager.duration
+        let playbackRate = audioManager.rate  // Current playback speed (1.0, 1.5, 2.0, etc.)
+
+        guard audioDuration > 0 else { return }
+
+        // Note: audioPosition is already the actual position in the file
+        // Playback rate doesn't affect the position value itself, only how fast it advances
+        // So we don't need to adjust audioPosition here - it's already correct
+
+        if let targetPage = calculatePageFromAudioPosition(audioPosition: audioPosition, audioDuration: audioDuration) {
+            // Only update if we're not already near this page (avoid jitter)
+            let currentDisplayPage = currentPage
+            if abs(targetPage - currentDisplayPage) > 2 {  // Allow 2-page tolerance
+                currentPage = targetPage
+                print("[EPUBReader] 🔄 Page auto-advanced to \(targetPage) (playback rate: \(playbackRate)x)")
+            }
+        }
     }
 }
 
@@ -519,4 +691,9 @@ private struct ChapterRow: View {
         .buttonStyle(.plain)
         .focused($isFocused)
     }
+}
+
+// MARK: - Notifications
+private extension Notification.Name {
+    static let epubReaderSyncRequest = Notification.Name("EPUBReaderSyncRequest")
 }
