@@ -588,4 +588,3 @@ final class GlobalAudioManager: NSObject, ObservableObject {
         print("[GlobalAudioManager] ⏲️ Periodic timers stopped")
     }
 }
-

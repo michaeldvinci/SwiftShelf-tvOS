@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Audiobookshelf Documentation
+    url: https://www.audiobookshelf.org/docs
+    about: Official Audiobookshelf server documentation
+  - name: Audiobookshelf Community
+    url: https://github.com/advplyr/audiobookshelf/discussions
+    about: Ask questions and discuss with the Audiobookshelf community
+  - name: SwiftShelf Discussions
+    url: https://github.com/michaeldvinci/swiftshelf-tvos/discussions
+    about: General questions and discussions about SwiftShelf

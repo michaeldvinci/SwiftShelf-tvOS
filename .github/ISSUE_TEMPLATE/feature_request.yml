@@ -1,0 +1,89 @@
+name: Feature Request
+description: Suggest a new feature or enhancement for SwiftShelf
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a feature! Please describe your idea below.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: Is your feature request related to a problem? Please describe.
+      placeholder: I'm frustrated when...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: Describe the solution you'd like
+      placeholder: I would like to be able to...
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Describe any alternative solutions or features you've considered
+      placeholder: Another approach could be...
+    validations:
+      required: false
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: How important is this feature to you?
+      options:
+        - Critical (blocking my use of the app)
+        - High (would significantly improve my experience)
+        - Medium (nice to have)
+        - Low (minor enhancement)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: feature-type
+    attributes:
+      label: Feature Category
+      description: What type of feature is this?
+      options:
+        - Playback (player controls, seeking, etc.)
+        - Library Management (browsing, searching, etc.)
+        - UI/UX (interface improvements)
+        - Sync/Progress (session tracking, resume points)
+        - Settings/Configuration
+        - Accessibility
+        - Performance
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      description: |
+        Add any other context, screenshots, or examples about the feature request here.
+        - Does the official Audiobookshelf app have this feature?
+        - Are there similar apps with this feature?
+      placeholder: Any additional information...
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-submission Checklist
+      description: Please confirm the following before submitting
+      options:
+        - label: I have searched for existing feature requests to avoid duplicates
+          required: true
+        - label: This feature would benefit other users, not just me
+          required: false
