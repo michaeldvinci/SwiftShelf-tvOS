@@ -22,6 +22,11 @@ struct EPUBReaderView: View {
     @State private var errorMessage: String?
     @State private var hasLoadedOnce = false  // Track if we've already loaded this book
 
+    // Audio sync state
+    @State private var audioSyncEnabled = false
+    @State private var audioSyncTimer: Timer?
+    @State private var chapterMapping: [Int: Int] = [:]  // Maps audio chapter index → EPUB TOC chapter index
+
     init(item: LibraryItem, ebookFile: LibraryItem.LibraryFile, showChapterMenu: Binding<Bool>) {
         self.item = item
         self.ebookFile = ebookFile
@@ -39,9 +44,9 @@ struct EPUBReaderView: View {
     private let sepiaText = Color(red: 0.27, green: 0.22, blue: 0.17)
 
     // Page dimensions for pagination
-    private let pageHeight: CGFloat = 900  // Available height for text
-    private let lineHeight: CGFloat = 26   // Font size 18 + line spacing 4 + some padding
-    private let charsPerLine: Int = 80     // Approximate characters per line
+    private let pageHeight: CGFloat = 800  // Available height for text (reduced to account for page number)
+    private let lineHeight: CGFloat = 30   // Font size 18 + line spacing 4 + extra padding (more conservative)
+    private let charsPerLine: Int = 70     // Approximate characters per line (more conservative)
 
     var body: some View {
         ZStack {
@@ -83,8 +88,15 @@ struct EPUBReaderView: View {
                 }
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .epubReaderSyncRequest)) { notification in
+            guard let id = notification.object as? String, id == String(describing: item.id) else { return }
+            syncWithAudioPosition()
+        }
         .task {
             await loadEbook()
+        }
+        .onDisappear {
+            stopAudioSync()
         }
         .onExitCommand {
             // Handle back button - close chapter menu if open
@@ -131,6 +143,24 @@ struct EPUBReaderView: View {
                 .focused($leftButtonFocused)
                 .disabled(currentPage <= 1)
                 .opacity(currentPage <= 1 ? 0.3 : 1.0)
+
+                Spacer()
+
+                // Audio sync toggle button
+                Button {
+                    audioSyncEnabled.toggle()
+                    if audioSyncEnabled {
+                        startAudioSync()
+                    } else {
+                        stopAudioSync()
+                    }
+                } label: {
+                    Image(systemName: audioSyncEnabled ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                        .font(.system(size: 20))
+                        .foregroundColor(audioSyncEnabled ? .green : sepiaText.opacity(0.5))
+                        .frame(width: 50, height: 50)
+                }
+                .buttonStyle(.plain)
 
                 Spacer()
 
@@ -207,29 +237,19 @@ struct EPUBReaderView: View {
                         if tocChapters.isEmpty {
                             // Fallback to sections if no TOC
                             ForEach(Array(chapters.enumerated()), id: \.offset) { index, chapter in
-                                Button {
-                                    navigateToSpineItem(index)
-                                    showChapterMenu = false
-                                } label: {
-                                    HStack {
-                                        VStack(alignment: .leading, spacing: 4) {
-                                            Text("Section \(index + 1)")
-                                                .font(.headline)
-                                                .foregroundColor(sepiaText)
-
-                                            let plainText = HTMLParser.htmlToPlainText(chapter.htmlContent)
-                                            let preview = plainText.prefix(60).replacingOccurrences(of: "\n", with: " ")
-                                            Text(preview + "...")
-                                                .font(.caption)
-                                                .foregroundColor(sepiaText.opacity(0.6))
-                                                .lineLimit(2)
-                                        }
-                                        Spacer()
+                                ChapterRow(
+                                    title: "Section \(index + 1)",
+                                    subtitle: {
+                                        let plainText = HTMLParser.htmlToPlainText(chapter.htmlContent)
+                                        let preview = plainText.prefix(60).replacingOccurrences(of: "\n", with: " ")
+                                        return preview + "..."
+                                    }(),
+                                    sepiaText: sepiaText,
+                                    onTap: {
+                                        navigateToSpineItem(index)
+                                        showChapterMenu = false
                                     }
-                                    .padding()
-                                    .background(Color.clear)
-                                }
-                                .buttonStyle(.plain)
+                                )
 
                                 Divider()
                                     .background(sepiaText.opacity(0.1))
@@ -237,28 +257,15 @@ struct EPUBReaderView: View {
                         } else {
                             // Use actual TOC chapters
                             ForEach(Array(tocChapters.enumerated()), id: \.offset) { index, tocChapter in
-                                Button {
-                                    navigateToTOCChapter(tocChapter)
-                                    showChapterMenu = false
-                                } label: {
-                                    HStack {
-                                        VStack(alignment: .leading, spacing: 4) {
-                                            Text(tocChapter.title)
-                                                .font(.headline)
-                                                .foregroundColor(sepiaText)
-
-                                            if let pageNum = spineToPageMap[tocChapter.href] {
-                                                Text("Page \(pageNum + 1)")
-                                                    .font(.caption)
-                                                    .foregroundColor(sepiaText.opacity(0.5))
-                                            }
-                                        }
-                                        Spacer()
+                                ChapterRow(
+                                    title: tocChapter.title,
+                                    subtitle: spineToPageMap[tocChapter.href].map { "Page \($0 + 1)" },
+                                    sepiaText: sepiaText,
+                                    onTap: {
+                                        navigateToTOCChapter(tocChapter)
+                                        showChapterMenu = false
                                     }
-                                    .padding()
-                                    .background(Color.clear)
-                                }
-                                .buttonStyle(.plain)
+                                )
 
                                 Divider()
                                     .background(sepiaText.opacity(0.1))
@@ -277,9 +284,6 @@ struct EPUBReaderView: View {
             // Darkened background overlay
             Color.black.opacity(0.5)
                 .edgesIgnoringSafeArea(.all)
-                .onTapGesture {
-                    showChapterMenu = false
-                }
 
             // Centered menu
             menuContent
@@ -308,14 +312,16 @@ struct EPUBReaderView: View {
             }
         } else if pageNumber < totalPages {
             VStack(spacing: 0) {
-                // Page content
+                // Page content with fixed height to prevent overflow
                 Text(paginatedPages[pageNumber])
                     .font(.system(size: 18))
                     .foregroundColor(sepiaText)
                     .lineSpacing(4)
                     .padding(.horizontal, 30)
                     .padding(.top, 20)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .frame(height: pageHeight)  // Fixed height matching pagination calculation
+                    .clipped()  // Clip any overflow
 
                 // Page number at bottom
                 Text("\(pageNumber + 1)")
@@ -491,6 +497,9 @@ struct EPUBReaderView: View {
 
             print("📖 Restored to page \(currentPage)")
 
+            // Build chapter mapping for audio sync
+            buildChapterMapping()
+
             isLoading = false
 
         } catch {
@@ -508,4 +517,183 @@ struct EPUBReaderView: View {
         guard currentPage < totalPages - 1 else { return }
         currentPage += 2  // Move forward 2 pages (one spread)
     }
+
+    // MARK: - Audio Sync
+
+    /// Build mapping between audio chapters and EPUB chapters by matching titles
+    private func buildChapterMapping() {
+        guard !item.chapters.isEmpty, !tocChapters.isEmpty else {
+            print("[EPUBReader] ⚠️ Cannot build chapter mapping: audio chapters=\(item.chapters.count), EPUB chapters=\(tocChapters.count)")
+            return
+        }
+
+        var mapping: [Int: Int] = [:]
+
+        for (audioIdx, audioChapter) in item.chapters.enumerated() {
+            // Try to find matching EPUB chapter by title similarity
+            let audioTitle = audioChapter.title.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+
+            if let epubIdx = tocChapters.firstIndex(where: { tocChapter in
+                let epubTitle = tocChapter.title.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+                return epubTitle == audioTitle || epubTitle.contains(audioTitle) || audioTitle.contains(epubTitle)
+            }) {
+                mapping[audioIdx] = epubIdx
+                print("[EPUBReader] 📖 Mapped audio chapter \(audioIdx) '\(audioChapter.title)' → EPUB chapter \(epubIdx) '\(tocChapters[epubIdx].title)'")
+            }
+        }
+
+        chapterMapping = mapping
+        print("[EPUBReader] ✅ Built chapter mapping: \(mapping.count)/\(item.chapters.count) chapters matched")
+    }
+
+    /// Calculate EPUB page based on current audio playback position
+    private func calculatePageFromAudioPosition(audioPosition: Double, audioDuration: Double) -> Int? {
+        guard !item.chapters.isEmpty else { return nil }
+
+        // Find which audio chapter we're in
+        guard let currentAudioChapter = item.chapters.first(where: { chapter in
+            audioPosition >= chapter.start && audioPosition < chapter.end
+        }) else {
+            return nil
+        }
+
+        guard let audioChapterIndex = item.chapters.firstIndex(where: { $0.id == currentAudioChapter.id }) else {
+            return nil
+        }
+
+        // Get mapped EPUB chapter
+        guard let epubChapterIndex = chapterMapping[audioChapterIndex] else {
+            print("[EPUBReader] ⚠️ No EPUB chapter mapped for audio chapter \(audioChapterIndex)")
+            return nil
+        }
+
+        guard epubChapterIndex < tocChapters.count else { return nil }
+
+        let epubChapter = tocChapters[epubChapterIndex]
+
+        // Get start page of this EPUB chapter
+        guard let chapterStartPage = spineToPageMap[epubChapter.href] else {
+            print("[EPUBReader] ⚠️ No page found for EPUB chapter \(epubChapterIndex) href=\(epubChapter.href)")
+            return nil
+        }
+
+        // Calculate progress within current audio chapter (0.0 to 1.0)
+        let chapterDuration = currentAudioChapter.end - currentAudioChapter.start
+        let positionInChapter = audioPosition - currentAudioChapter.start
+        let chapterProgress = chapterDuration > 0 ? positionInChapter / chapterDuration : 0.0
+
+        // Estimate pages in this EPUB chapter (distance to next chapter or end of book)
+        let chapterEndPage: Int
+        if epubChapterIndex + 1 < tocChapters.count, let nextChapterPage = spineToPageMap[tocChapters[epubChapterIndex + 1].href] {
+            chapterEndPage = nextChapterPage
+        } else {
+            chapterEndPage = totalPages
+        }
+
+        let pagesInChapter = max(1, chapterEndPage - chapterStartPage)
+
+        // Calculate target page based on progress
+        let estimatedPage = chapterStartPage + Int(Double(pagesInChapter) * chapterProgress)
+        let clampedPage = max(0, min(estimatedPage, totalPages - 1))
+
+        print("[EPUBReader] 🎯 Audio: \(Int(audioPosition))s in '\(currentAudioChapter.title)' (\(Int(chapterProgress * 100))%) → EPUB page \(clampedPage)")
+
+        return clampedPage
+    }
+
+    /// Start audio sync timer
+    private func startAudioSync() {
+        stopAudioSync()
+
+        // Schedule on main run loop; avoid capturing `self` (a struct) weakly
+        audioSyncTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
+            EPUBReaderView.performAudioSync(forItemID: String(describing: item.id))
+        }
+        RunLoop.main.add(audioSyncTimer!, forMode: .common)
+
+        print("[EPUBReader] 🎵 Audio sync started")
+    }
+
+    /// Static helper to perform audio sync without capturing `self` in a Timer closure
+    private static func performAudioSync(forItemID itemID: String) {
+        let audioManager = GlobalAudioManager.shared
+        // Only proceed if playing the same item
+        guard audioManager.isPlaying, String(describing: audioManager.currentItem?.id ?? "") == itemID else { return }
+
+        NotificationCenter.default.post(name: .epubReaderSyncRequest, object: itemID)
+    }
+
+    /// Stop audio sync timer
+    private func stopAudioSync() {
+        audioSyncTimer?.invalidate()
+        audioSyncTimer = nil
+    }
+
+    /// Sync EPUB position with current audio position
+    private func syncWithAudioPosition() {
+        // Get current audio position from GlobalAudioManager
+        let audioManager = GlobalAudioManager.shared
+
+        guard audioManager.isPlaying else { return }
+        guard audioManager.currentItem?.id == item.id else { return }  // Only sync if same item
+
+        let audioPosition = audioManager.currentTime
+        let audioDuration = audioManager.duration
+        let playbackRate = audioManager.rate  // Current playback speed (1.0, 1.5, 2.0, etc.)
+
+        guard audioDuration > 0 else { return }
+
+        // Note: audioPosition is already the actual position in the file
+        // Playback rate doesn't affect the position value itself, only how fast it advances
+        // So we don't need to adjust audioPosition here - it's already correct
+
+        if let targetPage = calculatePageFromAudioPosition(audioPosition: audioPosition, audioDuration: audioDuration) {
+            // Only update if we're not already near this page (avoid jitter)
+            let currentDisplayPage = currentPage
+            if abs(targetPage - currentDisplayPage) > 2 {  // Allow 2-page tolerance
+                currentPage = targetPage
+                print("[EPUBReader] 🔄 Page auto-advanced to \(targetPage) (playback rate: \(playbackRate)x)")
+            }
+        }
+    }
+}
+
+// MARK: - Chapter Row Component
+private struct ChapterRow: View {
+    let title: String
+    let subtitle: String?
+    let sepiaText: Color
+    let onTap: () -> Void
+
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.headline)
+                        .foregroundColor(isFocused ? .white : sepiaText)
+
+                    if let subtitle = subtitle {
+                        Text(subtitle)
+                            .font(.caption)
+                            .foregroundColor(isFocused ? .white.opacity(0.7) : sepiaText.opacity(0.5))
+                            .lineLimit(2)
+                    }
+                }
+                Spacer()
+            }
+            .padding()
+            .background(isFocused ? sepiaText : Color.clear)
+            .cornerRadius(8)
+        }
+        .buttonStyle(.plain)
+        .focused($isFocused)
+    }
+}
+
+// MARK: - Notifications
+private extension Notification.Name {
+    static let epubReaderSyncRequest = Notification.Name("EPUBReaderSyncRequest")
 }
