@@ -132,18 +132,16 @@ struct ContentView: View {
                     .environmentObject(config)
                     .environmentObject(audioManager)
                     .tabItem {
-                        // Tapping the active library title triggers refresh
-                        Button(action: {
-                            if selectedTabIndex == idx {
-                                vm.refreshToken += 1
-                            } else {
-                                selectedTabIndex = idx
-                            }
-                        }) {
-                            Text(lib.name)
-                        }
+                        // Tab items should not contain interactive buttons on tvOS
+                        Text(lib.name)
                     }
                     .tag(idx)
+                    .onTapGesture {
+                        // Tapping the active library tab triggers refresh
+                        if selectedTabIndex == idx {
+                            vm.refreshToken += 1
+                        }
+                    }
             }
 
             NowPlayingView()

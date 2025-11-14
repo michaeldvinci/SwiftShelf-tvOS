@@ -1,0 +1,175 @@
+name: Bug Report
+description: Report a bug or issue with SwiftShelf
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug! Please fill out the information below to help us diagnose and fix the issue.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what the bug is.
+      placeholder: Describe the issue you're experiencing...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Steps to reproduce the behavior
+      placeholder: |
+        1. Go to '...'
+        2. Click on '...'
+        3. Scroll down to '...'
+        4. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What you expected to happen
+      placeholder: Describe what should happen...
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened
+      placeholder: Describe what actually happened...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      description: How severe is this issue?
+      options:
+        - Critical (app crashes or unusable)
+        - High (major feature broken)
+        - Medium (feature works but with issues)
+        - Low (minor inconvenience)
+    validations:
+      required: true
+
+  - type: input
+    id: app-version
+    attributes:
+      label: SwiftShelf Version
+      description: What version of SwiftShelf are you using?
+      placeholder: e.g., 1.0.0 (check Settings > About)
+    validations:
+      required: true
+
+  - type: input
+    id: build-number
+    attributes:
+      label: Build Number
+      description: What build number are you using?
+      placeholder: e.g., 42 (check Settings > About)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: device
+    attributes:
+      label: Apple TV Model
+      description: Which Apple TV are you using? (Check Settings > General > About)
+      options:
+        - Apple TV 4K (3rd generation) Wi-Fi - A2737 (AppleTV14,1) - 2022
+        - Apple TV 4K (3rd generation) Wi-Fi + Ethernet - A2843 (AppleTV14,1) - 2022
+        - Apple TV 4K (2nd generation) - A2169 (AppleTV11,1) - 2021
+        - Apple TV 4K (1st generation) - A1842 (AppleTV6,2) - 2017
+        - Apple TV HD (4th generation) - A1625 (AppleTV5,3) - 2015
+        - Other (specify model number in additional context)
+    validations:
+      required: true
+
+  - type: input
+    id: tvos-version
+    attributes:
+      label: tvOS Version
+      description: Which version of tvOS are you running?
+      placeholder: e.g., 17.5.1 (check Settings > General > About)
+    validations:
+      required: true
+
+  - type: input
+    id: audiobookshelf-version
+    attributes:
+      label: Audiobookshelf Server Version
+      description: What version of Audiobookshelf server are you connecting to?
+      placeholder: e.g., 2.30.0 (check server settings)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: media-type
+    attributes:
+      label: Media Type
+      description: What type of media were you playing when the issue occurred?
+      options:
+        - Audiobook (single file)
+        - Audiobook (multi-file)
+        - Podcast
+        - Ebook (EPUB)
+        - Not applicable
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Console Logs (if available)
+      description: |
+        If you can access console logs from Xcode, please paste them here.
+        This will be automatically formatted as code.
+      render: shell
+      placeholder: Paste any relevant console output here...
+    validations:
+      required: false
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: If applicable, add screenshots to help explain your problem.
+      placeholder: Drag and drop images here or paste image URLs...
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      description: |
+        Add any other context about the problem here.
+        - Is this reproducible?
+        - Does it happen with specific audiobooks?
+        - Network conditions (WiFi, cellular, VPN)?
+        - Any error messages?
+      placeholder: Any additional information that might be helpful...
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-submission Checklist
+      description: Please confirm the following before submitting
+      options:
+        - label: I have searched for existing issues to avoid duplicates
+          required: true
+        - label: I have provided all required information above
+          required: true
+        - label: I can reproduce this issue consistently
+          required: false
