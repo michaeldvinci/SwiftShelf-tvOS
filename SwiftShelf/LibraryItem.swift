@@ -122,13 +122,36 @@ struct LibraryItem: Identifiable, Codable {
     }
     
     struct Track: Identifiable, Codable {
+        // Track-specific fields
         let index: Int
         let startOffset: Double?
         let duration: Double?
         let title: String?
         let contentUrl: String
         let mimeType: String?
+
+        // AudioFile fields (tracks inherit all AudioFile properties from the API)
+        let ino: String?
         let metadata: TrackMetadata?
+        let addedAt: Double?
+        let updatedAt: Double?
+        let trackNumFromMeta: Int?
+        let discNumFromMeta: Int?
+        let trackNumFromFilename: Int?
+        let discNumFromFilename: Int?
+        let manuallyVerified: Bool?
+        let exclude: Bool?
+        let error: String?
+        let format: String?
+        let bitRate: Int?
+        let language: String?
+        let codec: String?
+        let timeBase: String?
+        let channels: Int?
+        let channelLayout: String?
+        let chapters: [Chapter]?
+        let embeddedCoverArt: String?
+        let metaTags: MetaTags?
 
         var id: Int { index }
 
@@ -138,6 +161,18 @@ struct LibraryItem: Identifiable, Codable {
             let path: String?
             let relPath: String?
             let size: Int64?
+            let mtimeMs: Double?
+            let ctimeMs: Double?
+            let birthtimeMs: Double?
+        }
+
+        struct MetaTags: Codable {
+            let tagAlbum: String?
+            let tagArtist: String?
+            let tagTitle: String?
+            let tagTrack: String?
+            let tagAlbumArtist: String?
+            let tagEncoder: String?
         }
     }
 
@@ -208,7 +243,7 @@ struct PlaybackSessionResponse: Codable {
     let episodeId: String?
 
     // Additional fields that may be present
-    let startTime: String?
+    let startTime: Double?              // API returns this as a number, not string
     let currentTime: Double?
     let userId: String?
     let libraryId: String?

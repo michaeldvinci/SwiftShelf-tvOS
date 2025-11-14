@@ -568,7 +568,10 @@ extension ViewModel {
 
         let payload: [String: Any] = [
             "deviceInfo": deviceInfo,
-            "supportedMimeTypes": ["audio/mpeg", "audio/mp4", "audio/flac", "audio/x-m4a", "audio/aac"]
+            "supportedMimeTypes": ["audio/mpeg", "audio/mp4", "audio/flac", "audio/x-m4a", "audio/aac"],
+            "mediaPlayer": "AVPlayer",
+            "forceDirectPlay": true,
+            "forceTranscode": false
         ]
 
         var request = URLRequest(url: url)

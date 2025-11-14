@@ -1,4 +1,4 @@
-# SwiftShelf
+# swiftshelf-tvos
 
 <p align="center">
   <img src="_res/banner.jpg" alt="SwiftShelf Icon" width="500"/>

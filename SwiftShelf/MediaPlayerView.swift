@@ -309,15 +309,25 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
                 for track in playlist {
                     if let url = appVM.streamURL(for: track, in: fullItem) {
+                        print("[PlayerViewModel] 🎵 Building track \(track.index): \(track.title ?? "Untitled")")
+                        print("[PlayerViewModel]    URL: \(url)")
+                        print("[PlayerViewModel]    Duration: \(track.duration ?? 0)s")
+                        print("[PlayerViewModel]    StartOffset: \(track.startOffset ?? 0)s")
+
                         let asset = AVURLAsset(url: url)
                         let playerItem = AVPlayerItem(asset: asset)
                         setupPlayerItemErrorObserver(playerItem)
                         playerItems.append(playerItem)
                         totalDuration += track.duration ?? 0
 
-                        print("[PlayerViewModel] ➕ Added track to playlist: \(track.title ?? "Track \(track.index)")")
+                        print("[PlayerViewModel] ➕ Added track \(track.index) to playlist")
+                    } else {
+                        print("[PlayerViewModel] ❌ Failed to create URL for track \(track.index)")
                     }
                 }
+
+                print("[PlayerViewModel] 📊 Total tracks in playlist: \(playerItems.count)")
+                print("[PlayerViewModel] 📊 Total duration: \(totalDuration)s")
 
                 if !playerItems.isEmpty {
                     await MainActor.run {
@@ -326,29 +336,15 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
                     let queuePlayer = AVQueuePlayer(items: playerItems)
                     queuePlayer.automaticallyWaitsToMinimizeStalling = true
+                    queuePlayer.actionAtItemEnd = .advance  // Explicitly set to advance
                     self.player = queuePlayer
                     self.playlistItems = playerItems
 
+                    print("[PlayerViewModel] 🎬 Created AVQueuePlayer with \(queuePlayer.items().count) items")
+                    print("[PlayerViewModel] 🎬 actionAtItemEnd: \(queuePlayer.actionAtItemEnd.rawValue)")
+
                     // Add KVO for currentItem changes to update UI and re-apply rate
-                    self.playerItemChangeObservation = queuePlayer.observe(\AVQueuePlayer.currentItem, options: [.new]) { [weak self] _, _ in
-                        guard let self else { return }
-                        DispatchQueue.main.async {
-                            if let currentItem = queuePlayer.currentItem,
-                               let index = self.playlistItems.firstIndex(of: currentItem) {
-                                self.currentTrackIndex = index
-                                self.currentTrackTitle = self.playlist[safe: index]?.title ?? "Track \(index + 1)"
-                                let idx = self.currentTrackIndex
-                                let start = self.playlist.prefix(idx).reduce(0.0) { $0 + ($1.duration ?? 0) }
-                                let dur = self.playlist[safe: idx]?.duration ?? 0
-                                self.currentChapterStart = start
-                                self.currentChapterDuration = dur
-                            }
-                            if self.isPlaying {
-                                queuePlayer.rate = self.rate
-                            }
-                            self.updateNowPlaying()
-                        }
-                    }
+                    setupQueuePlayerObserver(queuePlayer)
 
                     await MainActor.run {
                         self.duration = totalDuration
@@ -427,15 +423,27 @@ final class PlayerViewModel: NSObject, ObservableObject {
     func setupTimeObserver() {
         AppLogger.shared.log("PlayerVM", "setupTimeObserver")
         print("[PlayerViewModel] ⏰ Setting up time observer")
-        guard let player = player else { 
+        guard let player = player else {
             print("[PlayerViewModel] ❌ No player available for time observer")
-            return 
+            return
         }
-        
+
         let interval = CMTime(value: 1, timescale: 2) // 0.5s
         timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: DispatchQueue.main) { [weak self] (t: CMTime) in
             guard let self else { return }
-            self.currentTime = CMTimeGetSeconds(t)
+
+            // For multi-track audiobooks, calculate absolute time across all tracks
+            let trackTime = CMTimeGetSeconds(t)
+            if !self.playlist.isEmpty && self.currentTrackIndex > 0 {
+                // Add the duration of all previous tracks to get absolute time
+                let previousTracksDuration = self.playlist.prefix(self.currentTrackIndex)
+                    .reduce(0.0) { $0 + ($1.duration ?? 0) }
+                self.currentTime = previousTracksDuration + trackTime
+            } else {
+                // Single track or first track - just use the time directly
+                self.currentTime = trackTime
+            }
+
             self.updateNowPlaying(elapsedOnly: true)
             self.persistProgressIfNeeded()
         }
@@ -472,41 +480,91 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
     func setupTrackEndObserver() {
         AppLogger.shared.log("PlayerVM", "setupTrackEndObserver")
-        // For AVQueuePlayer, observe when current item changes
+        print("[PlayerViewModel] 🔔 Setting up track end observer")
+
+        // For AVQueuePlayer, observe when current item finishes
         endObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemDidPlayToEndTime,
             object: nil,
             queue: .main
-        ) { [weak self] _ in
+        ) { [weak self] notification in
             guard let self else { return }
             guard let queue = self.player as? AVQueuePlayer else { return }
 
-            // Ensure the queue advances if it didn't automatically
-            if queue.items().isEmpty == false {
-                queue.advanceToNextItem()
+            // Check if the item that ended is actually from our queue
+            guard let endedItem = notification.object as? AVPlayerItem,
+                  self.playlistItems.contains(endedItem) else {
+                print("[PlayerViewModel] ⚠️ Track ended but not in our playlist, ignoring")
+                return
             }
 
-            // Update index/title based on new current item
-            if let currentItem = queue.currentItem,
-               let index = self.playlistItems.firstIndex(of: currentItem) {
-                self.currentTrackIndex = index
-                self.currentTrackTitle = self.playlist[safe: index]?.title ?? "Track \(index + 1)"
-                let idx = self.currentTrackIndex
-                let start = self.playlist.prefix(idx).reduce(0.0) { $0 + ($1.duration ?? 0) }
-                let dur = self.playlist[safe: idx]?.duration ?? 0
-                self.currentChapterStart = start
-                self.currentChapterDuration = dur
-            } else {
-                // Reached end of queue
-                self.isPlaying = false
-            }
+            print("[PlayerViewModel] 🏁 Track ended, checking for next track")
+            print("[PlayerViewModel] 🏁 Current queue has \(queue.items().count) items remaining")
+            print("[PlayerViewModel] 🏁 Was playing: \(self.isPlaying)")
 
-            // Re-apply rate if we should be playing
-            if self.isPlaying {
-                queue.rate = self.rate
-            }
+            // Save playback state
+            let wasPlaying = self.isPlaying
 
-            self.updateNowPlaying()
+            // Small delay to let AVQueuePlayer naturally advance
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                print("[PlayerViewModel] 🔍 After delay - queue has \(queue.items().count) items")
+
+                // Check if we have a next item
+                if let currentItem = queue.currentItem,
+                   let index = self.playlistItems.firstIndex(of: currentItem) {
+                    print("[PlayerViewModel] ✅ Advanced to track \(index)")
+                    print("[PlayerViewModel] ✅ Track title: \(self.playlist[safe: index]?.title ?? "Unknown")")
+
+                    // Update track info
+                    self.currentTrackIndex = index
+                    self.currentTrackTitle = self.playlist[safe: index]?.title ?? "Track \(index + 1)"
+                    self.currentTime = 0
+                    let start = self.playlist.prefix(index).reduce(0.0) { $0 + ($1.duration ?? 0) }
+                    let dur = self.playlist[safe: index]?.duration ?? 0
+                    self.currentChapterStart = start
+                    self.currentChapterDuration = dur
+
+                    // Maintain playback if we were playing
+                    if wasPlaying {
+                        print("[PlayerViewModel] ▶️ Resuming playback at rate \(self.rate)")
+                        queue.play()
+                        queue.rate = self.rate
+                        self.isPlaying = true
+                    } else {
+                        print("[PlayerViewModel] ⏸️ Was paused, not resuming")
+                    }
+                } else {
+                    // Reached end of queue
+                    print("[PlayerViewModel] 🏁 Reached end of audiobook - currentItem is nil")
+                    self.isPlaying = false
+                }
+
+                self.updateNowPlaying()
+            }
+        }
+    }
+
+    // Helper function to setup KVO observer for AVQueuePlayer currentItem changes
+    func setupQueuePlayerObserver(_ queuePlayer: AVQueuePlayer) {
+        print("[PlayerViewModel] 🔍 Setting up queue player observer")
+        playerItemChangeObservation = queuePlayer.observe(\AVQueuePlayer.currentItem, options: [.new]) { [weak self] _, _ in
+            guard let self else { return }
+            DispatchQueue.main.async {
+                if let currentItem = queuePlayer.currentItem,
+                   let index = self.playlistItems.firstIndex(of: currentItem) {
+                    self.currentTrackIndex = index
+                    self.currentTrackTitle = self.playlist[safe: index]?.title ?? "Track \(index + 1)"
+                    let idx = self.currentTrackIndex
+                    let start = self.playlist.prefix(idx).reduce(0.0) { $0 + ($1.duration ?? 0) }
+                    let dur = self.playlist[safe: idx]?.duration ?? 0
+                    self.currentChapterStart = start
+                    self.currentChapterDuration = dur
+                }
+                if self.isPlaying {
+                    queuePlayer.rate = self.rate
+                }
+                self.updateNowPlaying()
+            }
         }
     }
 
@@ -517,10 +575,83 @@ final class PlayerViewModel: NSObject, ObservableObject {
     func togglePlayPause() { isPlaying ? pause() : play() }
 
     func seek(to seconds: Double) {
-        let target = CMTime(seconds: max(0, min(seconds, duration)), preferredTimescale: 600)
-        player?.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
-        currentTime = seconds
-        updateNowPlaying(elapsedOnly: true)
+        guard let player = player else { return }
+
+        // For multi-track audiobooks (AVQueuePlayer), we need to find the correct track
+        if let queue = player as? AVQueuePlayer, !playlist.isEmpty {
+            let clampedSeconds = max(0, min(seconds, duration))
+
+            // Find which track contains this absolute time
+            var accumulatedTime: Double = 0
+            var targetTrackIndex: Int = 0
+            var timeWithinTrack: Double = clampedSeconds
+
+            for (index, track) in playlist.enumerated() {
+                let trackDuration = track.duration ?? 0
+                if clampedSeconds < accumulatedTime + trackDuration {
+                    // Found the target track
+                    targetTrackIndex = index
+                    timeWithinTrack = clampedSeconds - accumulatedTime
+                    break
+                }
+                accumulatedTime += trackDuration
+            }
+
+            // Check if we need to switch tracks
+            if targetTrackIndex != currentTrackIndex {
+                print("[PlayerViewModel] 🎯 Seek requires track switch: \(currentTrackIndex) -> \(targetTrackIndex)")
+
+                // Save playback state
+                let wasPlaying = isPlaying
+
+                // Create new queue starting from target track
+                let newItems = Array(playlistItems[targetTrackIndex...])
+                let newQueue = AVQueuePlayer(items: newItems)
+                newQueue.automaticallyWaitsToMinimizeStalling = true
+                newQueue.actionAtItemEnd = .advance  // Explicitly set to advance
+                self.player = newQueue
+
+                // Update track info
+                currentTrackIndex = targetTrackIndex
+                currentTrackTitle = playlist[safe: targetTrackIndex]?.title ?? "Track \(targetTrackIndex + 1)"
+                let start = playlist.prefix(targetTrackIndex).reduce(0.0) { $0 + ($1.duration ?? 0) }
+                let dur = playlist[safe: targetTrackIndex]?.duration ?? 0
+                currentChapterStart = start
+                currentChapterDuration = dur
+
+                // Reinstall observers for the new queue
+                setupTimeObserver()
+                setupTrackEndObserver()
+                setupRemoteCommands()
+                setupQueuePlayerObserver(newQueue)
+
+                // Seek to position within the target track
+                let targetTime = CMTime(seconds: timeWithinTrack, preferredTimescale: 600)
+                newQueue.seek(to: targetTime, toleranceBefore: .zero, toleranceAfter: .zero)
+                currentTime = clampedSeconds
+
+                // Restore playback state
+                if wasPlaying {
+                    newQueue.play()
+                    newQueue.rate = rate
+                }
+
+                updateNowPlaying()
+            } else {
+                // Same track, just seek within it
+                let targetTime = CMTime(seconds: timeWithinTrack, preferredTimescale: 600)
+                queue.seek(to: targetTime, toleranceBefore: .zero, toleranceAfter: .zero)
+                currentTime = clampedSeconds
+                updateNowPlaying(elapsedOnly: true)
+            }
+        } else {
+            // Single-track player: simple seek
+            let clampedSeconds = max(0, min(seconds, duration))
+            let target = CMTime(seconds: clampedSeconds, preferredTimescale: 600)
+            player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
+            currentTime = clampedSeconds
+            updateNowPlaying(elapsedOnly: true)
+        }
     }
 
     func skip(_ by: Double) { seek(to: max(0, min(currentTime + by, duration))) }
@@ -533,25 +664,53 @@ final class PlayerViewModel: NSObject, ObservableObject {
         // Advance to the next track if using a queue; otherwise, do nothing
         guard let player = player else { return }
         if let queue = player as? AVQueuePlayer {
-            // Attempt to advance
-            queue.advanceToNextItem()
-            if let currentItem = queue.currentItem,
-               let index = playlistItems.firstIndex(of: currentItem) {
-                currentTrackIndex = index
-                currentTrackTitle = playlist[safe: index]?.title ?? "Track \(index + 1)"
-                currentTime = 0
-                let idx = currentTrackIndex
-                let start = playlist.prefix(idx).reduce(0.0) { $0 + ($1.duration ?? 0) }
-                let dur = playlist[safe: idx]?.duration ?? 0
-                currentChapterStart = start
-                currentChapterDuration = dur
-                if isPlaying { queue.rate = rate }
-                updateNowPlaying()
-            } else {
-                // No next item — reached end of queue
-                isPlaying = false
-                updateNowPlaying()
+            // Save playback state before advancing
+            let wasPlaying = isPlaying
+
+            // Check if we can advance
+            guard let currentItem = queue.currentItem,
+                  let currentIndex = playlistItems.firstIndex(of: currentItem),
+                  currentIndex < playlistItems.count - 1 else {
+                // At the end of the queue
+                print("[PlayerViewModel] ⏭️ Already at last track")
+                return
             }
+
+            print("[PlayerViewModel] ⏭️ Advancing to next track: \(currentIndex) -> \(currentIndex + 1)")
+
+            // Create new queue starting from next track
+            let newItems = Array(playlistItems[(currentIndex + 1)...])
+            let newQueue = AVQueuePlayer(items: newItems)
+            newQueue.automaticallyWaitsToMinimizeStalling = true
+            newQueue.actionAtItemEnd = .advance  // Explicitly set to advance
+            self.player = newQueue
+
+            // Update track info
+            let newIndex = currentIndex + 1
+            currentTrackIndex = newIndex
+            currentTrackTitle = playlist[safe: newIndex]?.title ?? "Track \(newIndex + 1)"
+            currentTime = 0
+            let start = playlist.prefix(newIndex).reduce(0.0) { $0 + ($1.duration ?? 0) }
+            let dur = playlist[safe: newIndex]?.duration ?? 0
+            currentChapterStart = start
+            currentChapterDuration = dur
+
+            // Reinstall observers for the new queue
+            setupTimeObserver()
+            setupTrackEndObserver()
+            setupRemoteCommands()
+            setupQueuePlayerObserver(newQueue)
+
+            // Restore playback state
+            if wasPlaying {
+                newQueue.play()
+                newQueue.rate = rate
+                isPlaying = true
+            } else {
+                isPlaying = false
+            }
+
+            updateNowPlaying()
         } else {
             // Single-item player: just seek to end
             seek(to: duration)
@@ -563,49 +722,67 @@ final class PlayerViewModel: NSObject, ObservableObject {
         // If far enough into the current track, just restart it; otherwise go to previous
         guard let player = player else { return }
         if let queue = player as? AVQueuePlayer {
-            if let currentItem = queue.currentItem,
-               let index = playlistItems.firstIndex(of: currentItem) {
-                if currentTime > 3 {
-                    // Restart current track
-                    seek(to: 0)
-                    let idx = index
-                    let start = playlist.prefix(idx).reduce(0.0) { $0 + ($1.duration ?? 0) }
-                    let dur = playlist[safe: idx]?.duration ?? 0
-                    currentChapterStart = start
-                    currentChapterDuration = dur
-                    return
-                }
-                // Go to previous track if available
-                if index > 0 {
-                    let newItems = Array(playlistItems[(index - 1)...])
-                    let newQueue = AVQueuePlayer(items: newItems)
-                    newQueue.automaticallyWaitsToMinimizeStalling = true
-                    self.player = newQueue
+            guard let currentItem = queue.currentItem,
+                  let index = playlistItems.firstIndex(of: currentItem) else {
+                print("[PlayerViewModel] ⏮️ Cannot determine current track")
+                return
+            }
 
-                    // Reinstall observers for the new player
-                    setupTimeObserver()
-                    setupTrackEndObserver()
-                    setupRemoteCommands()
+            // Calculate absolute time to determine if we're >3s into current track
+            let absoluteTime = playlist.prefix(index).reduce(0.0) { $0 + ($1.duration ?? 0) } + currentTime
 
-                    currentTrackIndex = index - 1
-                    currentTrackTitle = playlist[safe: currentTrackIndex]?.title ?? "Track \(currentTrackIndex + 1)"
-                    currentTime = 0
-                    let idx = currentTrackIndex
-                    let start = playlist.prefix(idx).reduce(0.0) { $0 + ($1.duration ?? 0) }
-                    let dur = playlist[safe: idx]?.duration ?? 0
-                    currentChapterStart = start
-                    currentChapterDuration = dur
-                    if isPlaying { newQueue.play(); newQueue.rate = rate }
-                    updateNowPlaying()
+            // If more than 3 seconds into the current track, just restart it
+            let trackStartTime = playlist.prefix(index).reduce(0.0) { $0 + ($1.duration ?? 0) }
+            if absoluteTime - trackStartTime > 3 {
+                print("[PlayerViewModel] ⏮️ Restarting current track")
+                seek(to: trackStartTime)
+                return
+            }
+
+            // Otherwise, go to previous track if available
+            if index > 0 {
+                print("[PlayerViewModel] ⏮️ Going to previous track: \(index) -> \(index - 1)")
+
+                // Save playback state
+                let wasPlaying = isPlaying
+
+                // Create new queue starting from previous track
+                let newItems = Array(playlistItems[(index - 1)...])
+                let newQueue = AVQueuePlayer(items: newItems)
+                newQueue.automaticallyWaitsToMinimizeStalling = true
+                newQueue.actionAtItemEnd = .advance  // Explicitly set to advance
+                self.player = newQueue
+
+                // Update track info
+                let newIndex = index - 1
+                currentTrackIndex = newIndex
+                currentTrackTitle = playlist[safe: newIndex]?.title ?? "Track \(newIndex + 1)"
+                currentTime = 0
+                let start = playlist.prefix(newIndex).reduce(0.0) { $0 + ($1.duration ?? 0) }
+                let dur = playlist[safe: newIndex]?.duration ?? 0
+                currentChapterStart = start
+                currentChapterDuration = dur
+
+                // Reinstall observers for the new queue
+                setupTimeObserver()
+                setupTrackEndObserver()
+                setupRemoteCommands()
+                setupQueuePlayerObserver(newQueue)
+
+                // Restore playback state
+                if wasPlaying {
+                    newQueue.play()
+                    newQueue.rate = rate
+                    isPlaying = true
                 } else {
-                    // At the start of the queue — just restart current
-                    seek(to: 0)
-                    let idx = index
-                    let start = playlist.prefix(idx).reduce(0.0) { $0 + ($1.duration ?? 0) }
-                    let dur = playlist[safe: idx]?.duration ?? 0
-                    currentChapterStart = start
-                    currentChapterDuration = dur
+                    isPlaying = false
                 }
+
+                updateNowPlaying()
+            } else {
+                // At the start of the queue — just restart current track
+                print("[PlayerViewModel] ⏮️ Already at first track, restarting")
+                seek(to: 0)
             }
         } else {
             // Single-item player: restart

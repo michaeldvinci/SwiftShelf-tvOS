@@ -41,7 +41,7 @@ final class GlobalAudioManager: NSObject, ObservableObject {
     private var currentSessionId: String?
     private var lastSyncTime: Date?              // When we last sent a sync
     private var lastSyncPosition: Double = 0     // Position at last sync
-    private var sessionSyncTimer: Timer?          // Periodic session sync (20s)
+    private var sessionSyncTimer: Timer?          // Periodic session sync (15s - matches official app)
     private var progressSyncTimer: Timer?         // Periodic progress PATCH (90s)
 
     private override init() {
@@ -49,6 +49,35 @@ final class GlobalAudioManager: NSObject, ObservableObject {
         print("===========================================")
         print("[GlobalAudioManager] 🎬🎬🎬 INITIALIZED v2.0 🎬🎬🎬")
         print("===========================================")
+        setupRemoteCommands()
+    }
+
+    private func setupRemoteCommands() {
+        let commandCenter = MPRemoteCommandCenter.shared()
+
+        commandCenter.playCommand.isEnabled = true
+        commandCenter.playCommand.addTarget { [weak self] _ in
+            Task { @MainActor in
+                self?.play()
+            }
+            return .success
+        }
+
+        commandCenter.pauseCommand.isEnabled = true
+        commandCenter.pauseCommand.addTarget { [weak self] _ in
+            Task { @MainActor in
+                self?.pause()
+            }
+            return .success
+        }
+
+        commandCenter.togglePlayPauseCommand.isEnabled = true
+        commandCenter.togglePlayPauseCommand.addTarget { [weak self] _ in
+            Task { @MainActor in
+                self?.togglePlayPause()
+            }
+            return .success
+        }
     }
     
     func loadItem(_ item: LibraryItem, appVM: ViewModel) async {
@@ -154,16 +183,16 @@ final class GlobalAudioManager: NSObject, ObservableObject {
 
         playerViewModel?.pause()
 
-        // Stop periodic timers
+        // Stop periodic timers (session stays open - matches official app behavior)
         stopPeriodicTimers()
 
-        // Save progress immediately when pausing (canonical flow)
+        // Do final sync with current state before stopping timers
         saveProgressAndSyncSession()
 
-        // Close the session when pausing (per ABS spec: new session for each play action)
-        Task {
-            await closeCurrentSession()
-        }
+        // NOTE: Session stays open during pause. It will close when:
+        // - User loads a different item (stopCurrentPlayback)
+        // - App terminates
+        // This matches the official audiobookshelf-app behavior
     }
     
     func togglePlayPause() {
@@ -193,14 +222,11 @@ final class GlobalAudioManager: NSObject, ObservableObject {
                 }
             } else if !self.isPlaying && wasPlaying {
                 // Transitioned from playing to paused
-                print("[GlobalAudioManager] ⏸️ Paused - stopping timers and saving")
+                print("[GlobalAudioManager] ⏸️ Paused - stopping timers and saving (session stays open)")
                 self.stopPeriodicTimers()
                 self.saveProgressAndSyncSession()
 
-                // Close session when pausing
-                Task {
-                    await self.closeCurrentSession()
-                }
+                // NOTE: Session stays open during pause (matches official app)
             }
         }
     }
@@ -209,10 +235,9 @@ final class GlobalAudioManager: NSObject, ObservableObject {
         print("[GlobalAudioManager] ⏩ Seek to \(seconds)s requested")
         playerViewModel?.seek(to: seconds)
 
-        // Per canonical ABS flow: send immediate sync with timeListened=0 on seek
-        Task { @MainActor in
-            await syncSessionAfterSeek()
-        }
+        // NOTE: Official app does NOT sync immediately on seek
+        // It waits for the next periodic sync interval (15s)
+        // This prevents spam syncing during rapid seeking
     }
     
     func skip(_ by: Double) {
@@ -388,7 +413,7 @@ final class GlobalAudioManager: NSObject, ObservableObject {
         }
     }
 
-    /// Send periodic sync every 20s with delta timeListened
+    /// Send periodic sync every 15s with delta timeListened
     private func syncSessionPeriodic() {
         guard let sessionId = currentSessionId else { return }
         guard let appVM = appViewModel else { return }
@@ -430,39 +455,6 @@ final class GlobalAudioManager: NSObject, ObservableObject {
 
         // Update last sync tracking
         lastSyncTime = now
-        lastSyncPosition = currentPosition
-    }
-
-    /// Immediate sync after seek with timeListened=0
-    private func syncSessionAfterSeek() async {
-        guard let sessionId = currentSessionId else { return }
-        guard let appVM = appViewModel else { return }
-        guard let item = currentItem else { return }
-
-        let currentPosition = currentTime
-
-        // Use player duration, but fallback to item duration if player hasn't loaded yet
-        var totalDuration = duration
-        if totalDuration <= 0, let itemDuration = item.duration {
-            totalDuration = itemDuration
-        }
-
-        guard totalDuration > 0 else {
-            print("[GlobalAudioManager] ⚠️ Cannot sync after seek: duration is 0")
-            return
-        }
-
-        print("[GlobalAudioManager] ⏩ Seek sync: pos=\(currentPosition)s, timeListened=0")
-
-        await appVM.syncSession(
-            sessionId: sessionId,
-            currentTime: currentPosition,
-            timeListened: 0,
-            duration: totalDuration
-        )
-
-        // Update tracking
-        lastSyncTime = Date()
         lastSyncPosition = currentPosition
     }
 
@@ -513,7 +505,7 @@ final class GlobalAudioManager: NSObject, ObservableObject {
         }
     }
 
-    /// Close session with final state
+    /// Close session with final sync first (matches official app behavior)
     private func closeCurrentSession() async {
         guard let sessionId = currentSessionId else { return }
         guard let appVM = appViewModel else { return }
@@ -534,19 +526,22 @@ final class GlobalAudioManager: NSObject, ObservableObject {
             deltaTime = 0
         }
 
-        print("[GlobalAudioManager] 📝 Closing session with final state: pos=\(currentPosition)s, delta=\(deltaTime)s")
+        print("[GlobalAudioManager] 📤 Final sync before close: pos=\(currentPosition)s, delta=\(deltaTime)s")
 
-        // Only send duration if we have it; otherwise close without payload
+        // Step 1: Do final sync with current state (matches official app)
         if totalDuration > 0 {
-            await appVM.closeSession(
+            await appVM.syncSession(
                 sessionId: sessionId,
                 currentTime: currentPosition,
                 timeListened: deltaTime,
                 duration: totalDuration
             )
-        } else {
-            await appVM.closeSession(sessionId: sessionId)
         }
+
+        print("[GlobalAudioManager] 📝 Closing session: \(sessionId)")
+
+        // Step 2: Close the session
+        await appVM.closeSession(sessionId: sessionId)
 
         currentSessionId = nil
         lastSyncTime = nil
@@ -561,12 +556,12 @@ final class GlobalAudioManager: NSObject, ObservableObject {
 
     // MARK: - Periodic Timers
 
-    /// Start periodic timers: session sync (20s), progress PATCH (90s)
+    /// Start periodic timers: session sync (15s), progress PATCH (90s)
     private func startPeriodicTimers() {
         stopPeriodicTimers()
 
-        // Session sync every 20s
-        sessionSyncTimer = Timer.scheduledTimer(withTimeInterval: 20.0, repeats: true) { [weak self] _ in
+        // Session sync every 15s (matches official audiobookshelf-app)
+        sessionSyncTimer = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.syncSessionPeriodic()
             }
@@ -579,7 +574,7 @@ final class GlobalAudioManager: NSObject, ObservableObject {
             }
         }
 
-        print("[GlobalAudioManager] ⏲️ Periodic timers started: session=20s, progress=90s")
+        print("[GlobalAudioManager] ⏲️ Periodic timers started: session=15s, progress=90s")
     }
 
     /// Stop all periodic timers

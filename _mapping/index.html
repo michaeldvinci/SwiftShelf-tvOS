@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SwiftShelf Architecture Map</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            height: 100vh;
+            overflow: hidden;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        header {
+            background: #252526;
+            padding: 1rem 2rem;
+            border-bottom: 1px solid #3e3e42;
+        }
+        h1 {
+            font-size: 1.5rem;
+            font-weight: 500;
+            color: #fff;
+        }
+        .tabs {
+            display: flex;
+            gap: 0.5rem;
+            background: #252526;
+            padding: 0 2rem;
+            border-bottom: 1px solid #3e3e42;
+        }
+        .tab {
+            padding: 0.75rem 1.5rem;
+            background: transparent;
+            border: none;
+            color: #969696;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s;
+            font-size: 0.9rem;
+        }
+        .tab:hover {
+            color: #d4d4d4;
+        }
+        .tab.active {
+            color: #fff;
+            border-bottom-color: #007acc;
+        }
+        .content {
+            flex: 1;
+            overflow: auto;
+            padding: 2rem;
+        }
+        .tab-panel {
+            display: none;
+        }
+        .tab-panel.active {
+            display: block;
+        }
+        .file-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 1rem;
+        }
+        .file-card {
+            background: #252526;
+            border: 1px solid #3e3e42;
+            border-radius: 4px;
+            padding: 1rem;
+        }
+        .file-card h3 {
+            color: #4ec9b0;
+            font-size: 1rem;
+            margin-bottom: 0.5rem;
+        }
+        .file-card .category {
+            display: inline-block;
+            padding: 0.2rem 0.5rem;
+            background: #007acc;
+            color: #fff;
+            font-size: 0.7rem;
+            border-radius: 3px;
+            margin-bottom: 0.5rem;
+        }
+        .file-card .purpose {
+            color: #969696;
+            font-size: 0.85rem;
+            line-height: 1.4;
+            margin: 0.5rem 0;
+        }
+        .file-card .types {
+            color: #dcdcaa;
+            font-size: 0.8rem;
+        }
+        .architecture-section {
+            margin-bottom: 2rem;
+        }
+        .architecture-section h3 {
+            color: #4ec9b0;
+            font-size: 1.2rem;
+            margin-bottom: 1rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .file-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+        .file-badge {
+            background: #252526;
+            border: 1px solid #3e3e42;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            color: #d4d4d4;
+        }
+        .flow-diagram {
+            background: #252526;
+            border: 1px solid #3e3e42;
+            border-radius: 4px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+        .flow-diagram h4 {
+            color: #dcdcaa;
+            font-size: 1rem;
+            margin-bottom: 0.5rem;
+        }
+        .flow-path {
+            color: #4fc1ff;
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 0.9rem;
+            margin: 0.5rem 0;
+            padding: 0.5rem;
+            background: #1e1e1e;
+            border-radius: 3px;
+        }
+        .flow-desc {
+            color: #969696;
+            font-size: 0.85rem;
+            margin-top: 0.5rem;
+        }
+        #graph {
+            width: 100%;
+            height: 800px;
+            background: #252526;
+            border: 1px solid #3e3e42;
+            border-radius: 4px;
+        }
+        .feature-list {
+            list-style: none;
+        }
+        .feature-list li {
+            background: #252526;
+            border-left: 3px solid #007acc;
+            padding: 0.75rem 1rem;
+            margin-bottom: 0.5rem;
+            border-radius: 0 4px 4px 0;
+        }
+        .search-box {
+            width: 100%;
+            padding: 0.75rem;
+            background: #3c3c3c;
+            border: 1px solid #3e3e42;
+            border-radius: 4px;
+            color: #d4d4d4;
+            margin-bottom: 1.5rem;
+            font-size: 0.9rem;
+        }
+        .search-box:focus {
+            outline: none;
+            border-color: #007acc;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📱 SwiftShelf Architecture Map</h1>
+        </header>
+
+        <div class="tabs">
+            <button class="tab active" data-tab="overview">Overview</button>
+            <button class="tab" data-tab="files">Files</button>
+            <button class="tab" data-tab="architecture">Architecture</button>
+            <button class="tab" data-tab="dataflow">Data Flow</button>
+            <button class="tab" data-tab="graph">Relationships</button>
+            <button class="tab" data-tab="features">Features</button>
+        </div>
+
+        <div class="content">
+            <div id="overview" class="tab-panel active">
+                <h2 style="color: #4ec9b0; margin-bottom: 1rem;">Project Overview</h2>
+                <div class="flow-diagram">
+                    <h4>SwiftShelf tvOS Audiobook Player</h4>
+                    <p class="flow-desc">
+                        A native tvOS client for Audiobookshelf servers featuring audiobook playback,
+                        EPUB reading with audio synchronization, multi-library support, and comprehensive
+                        progress tracking.
+                    </p>
+                </div>
+
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-top: 2rem;">
+                    <div class="file-card">
+                        <h3>18 Files</h3>
+                        <p class="flow-desc">Swift source files analyzed</p>
+                    </div>
+                    <div class="file-card">
+                        <h3>5 Categories</h3>
+                        <p class="flow-desc">App, Views, Managers, Models, Utilities</p>
+                    </div>
+                    <div class="file-card">
+                        <h3>42 Relationships</h3>
+                        <p class="flow-desc">Dependencies mapped</p>
+                    </div>
+                    <div class="file-card">
+                        <h3>14 Features</h3>
+                        <p class="flow-desc">Key capabilities documented</p>
+                    </div>
+                </div>
+            </div>
+
+            <div id="files" class="tab-panel">
+                <input type="text" class="search-box" placeholder="Search files..." id="fileSearch">
+                <div class="file-grid" id="fileGrid"></div>
+            </div>
+
+            <div id="architecture" class="tab-panel">
+                <div id="architectureContent"></div>
+            </div>
+
+            <div id="dataflow" class="tab-panel">
+                <h2 style="color: #4ec9b0; margin-bottom: 1rem;">Data Flow Patterns</h2>
+                <div id="dataflowContent"></div>
+            </div>
+
+            <div id="graph" class="tab-panel">
+                <canvas id="relationshipCanvas"></canvas>
+            </div>
+
+            <div id="features" class="tab-panel">
+                <h2 style="color: #4ec9b0; margin-bottom: 1.5rem;">Key Features</h2>
+                <ul class="feature-list" id="featureList"></ul>
+            </div>
+        </div>
+    </div>
+
+    <script src="data.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
