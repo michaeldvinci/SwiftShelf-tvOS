@@ -252,6 +252,10 @@ final class PlayerViewModel: NSObject, ObservableObject {
     @Published var currentChapterStart: Double = 0
     @Published var currentChapterDuration: Double = 0
 
+    // Track the startOffset of the current track for absolute time calculation
+    // This is the server-provided canonical absolute timestamp for multi-file audiobooks
+    private var currentTrackStartOffset: Double = 0
+
     // Logging / observer tokens
     private var statusObservations: [NSKeyValueObservation] = []
     private var perItemNotificationTokens: [NSObjectProtocol] = []
@@ -296,12 +300,82 @@ final class PlayerViewModel: NSObject, ObservableObject {
         if let fullItem = await appVM.fetchLibraryItemDetails(itemId: item.id) {
             print("[PlayerViewModel] ✅ Successfully fetched detailed item with \(fullItem.tracks.count) tracks and \(fullItem.audioFiles.count) audio files")
 
+            // Build tracks array - either use server-provided tracks or build from audioFiles
+            var tracksToUse: [LibraryItem.Track] = []
+
             if !fullItem.tracks.isEmpty {
-                print("[PlayerViewModel] 📚 TRACKS FOUND - Using track-based approach")
-                await MainActor.run {
-                    self.loadingStatus = "Found \(fullItem.tracks.count) tracks, building playlist..."
+                print("[PlayerViewModel] 📚 Using server-provided tracks")
+                tracksToUse = fullItem.tracks.sorted { $0.index < $1.index }
+            } else if fullItem.audioFiles.count > 1 {
+                // Server didn't provide tracks, but we have multiple audio files
+                // Build tracks manually from audioFiles
+                print("[PlayerViewModel] 🔨 Building tracks from \(fullItem.audioFiles.count) audio files")
+                let sortedAudioFiles = fullItem.audioFiles.sorted { $0.index < $1.index }
+                var cumulativeOffset: Double = 0
+
+                for audioFile in sortedAudioFiles {
+                    let trackDuration = audioFile.duration ?? 0
+
+                    // Build contentUrl path for this audioFile (just the path, not full URL)
+                    // The streamURL function will add the host and token
+                    let contentUrl = "/api/items/\(fullItem.id)/file/\(audioFile.ino)"
+
+                    let track = LibraryItem.Track(
+                        index: audioFile.index,
+                        startOffset: cumulativeOffset,
+                        duration: trackDuration,
+                        title: audioFile.filename ?? "Track \(audioFile.index + 1)",
+                        contentUrl: contentUrl,
+                        mimeType: audioFile.mimeType,
+                        ino: audioFile.ino,
+                        metadata: audioFile.metadata.map { audioMeta in
+                            LibraryItem.Track.TrackMetadata(
+                                filename: audioMeta.filename,
+                                ext: audioMeta.ext,
+                                path: audioMeta.path,
+                                relPath: audioMeta.relPath,
+                                size: audioMeta.size,
+                                mtimeMs: audioMeta.mtimeMs.map { Double($0) },
+                                ctimeMs: audioMeta.ctimeMs.map { Double($0) },
+                                birthtimeMs: audioMeta.birthtimeMs.map { Double($0) }
+                            )
+                        },
+                        addedAt: audioFile.addedAt,
+                        updatedAt: audioFile.updatedAt,
+                        trackNumFromMeta: audioFile.trackNumFromMeta,
+                        discNumFromMeta: audioFile.discNumFromMeta,
+                        trackNumFromFilename: audioFile.trackNumFromFilename,
+                        discNumFromFilename: audioFile.discNumFromFilename,
+                        manuallyVerified: audioFile.manuallyVerified,
+                        exclude: audioFile.exclude,
+                        error: audioFile.error,
+                        format: audioFile.format,
+                        bitRate: audioFile.bitRate,
+                        language: audioFile.language,
+                        codec: audioFile.codec,
+                        timeBase: audioFile.timeBase,
+                        channels: audioFile.channels,
+                        channelLayout: audioFile.channelLayout,
+                        chapters: nil,
+                        embeddedCoverArt: nil,
+                        metaTags: nil
+                    )
+
+                    tracksToUse.append(track)
+                    print("[PlayerViewModel]    Track \(audioFile.index): \(track.title ?? "Untitled") - startOffset=\(cumulativeOffset)s, duration=\(trackDuration)s")
+
+                    cumulativeOffset += trackDuration
                 }
-                self.playlist = fullItem.tracks.sorted { $0.index < $1.index }
+
+                print("[PlayerViewModel] 🔨 Built \(tracksToUse.count) tracks with total duration \(cumulativeOffset)s")
+            }
+
+            if !tracksToUse.isEmpty {
+                print("[PlayerViewModel] 📚 TRACKS AVAILABLE - Using track-based approach with \(tracksToUse.count) tracks")
+                await MainActor.run {
+                    self.loadingStatus = "Found \(tracksToUse.count) tracks, building playlist..."
+                }
+                self.playlist = tracksToUse
 
                 // Build all playlist items
                 var playerItems: [AVPlayerItem] = []
@@ -349,10 +423,13 @@ final class PlayerViewModel: NSObject, ObservableObject {
                     await MainActor.run {
                         self.duration = totalDuration
                         self.currentTrackTitle = playlist.first?.title ?? "Track 1"
-                        self.currentChapterStart = 0
+                        self.currentTrackStartOffset = playlist.first?.startOffset ?? 0
+                        self.currentChapterStart = playlist.first?.startOffset ?? 0
                         self.currentChapterDuration = self.playlist.first?.duration ?? 0
                         self.hasAudioStream = true
                         self.loadingStatus = "Ready to play!"
+
+                        print("[PlayerViewModel] 📍 Initial track startOffset: \(self.currentTrackStartOffset)s")
                     }
 
                     setupTimeObserver()
@@ -432,15 +509,14 @@ final class PlayerViewModel: NSObject, ObservableObject {
         timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: DispatchQueue.main) { [weak self] (t: CMTime) in
             guard let self else { return }
 
-            // For multi-track audiobooks, calculate absolute time across all tracks
+            // For multi-track audiobooks, use startOffset for absolute time
             let trackTime = CMTimeGetSeconds(t)
-            if !self.playlist.isEmpty && self.currentTrackIndex > 0 {
-                // Add the duration of all previous tracks to get absolute time
-                let previousTracksDuration = self.playlist.prefix(self.currentTrackIndex)
-                    .reduce(0.0) { $0 + ($1.duration ?? 0) }
-                self.currentTime = previousTracksDuration + trackTime
+            if !self.playlist.isEmpty {
+                // Use the current track's startOffset (server-provided canonical timestamp)
+                // This is accurate even if the queue has been manipulated
+                self.currentTime = self.currentTrackStartOffset + trackTime
             } else {
-                // Single track or first track - just use the time directly
+                // Single track - just use the time directly
                 self.currentTime = trackTime
             }
 
@@ -515,14 +591,16 @@ final class PlayerViewModel: NSObject, ObservableObject {
                     print("[PlayerViewModel] ✅ Advanced to track \(index)")
                     print("[PlayerViewModel] ✅ Track title: \(self.playlist[safe: index]?.title ?? "Unknown")")
 
-                    // Update track info
+                    // Update track info using startOffset
                     self.currentTrackIndex = index
                     self.currentTrackTitle = self.playlist[safe: index]?.title ?? "Track \(index + 1)"
-                    self.currentTime = 0
-                    let start = self.playlist.prefix(index).reduce(0.0) { $0 + ($1.duration ?? 0) }
-                    let dur = self.playlist[safe: index]?.duration ?? 0
-                    self.currentChapterStart = start
-                    self.currentChapterDuration = dur
+
+                    let track = self.playlist[safe: index]
+                    self.currentTrackStartOffset = track?.startOffset ?? 0
+                    self.currentChapterStart = track?.startOffset ?? 0
+                    self.currentChapterDuration = track?.duration ?? 0
+
+                    print("[PlayerViewModel] 📍 New track startOffset: \(self.currentTrackStartOffset)s")
 
                     // Maintain playback if we were playing
                     if wasPlaying {
@@ -554,11 +632,14 @@ final class PlayerViewModel: NSObject, ObservableObject {
                    let index = self.playlistItems.firstIndex(of: currentItem) {
                     self.currentTrackIndex = index
                     self.currentTrackTitle = self.playlist[safe: index]?.title ?? "Track \(index + 1)"
-                    let idx = self.currentTrackIndex
-                    let start = self.playlist.prefix(idx).reduce(0.0) { $0 + ($1.duration ?? 0) }
-                    let dur = self.playlist[safe: idx]?.duration ?? 0
-                    self.currentChapterStart = start
-                    self.currentChapterDuration = dur
+
+                    // Use startOffset from the track (server-provided canonical timestamp)
+                    let track = self.playlist[safe: index]
+                    self.currentTrackStartOffset = track?.startOffset ?? 0
+                    self.currentChapterStart = track?.startOffset ?? 0
+                    self.currentChapterDuration = track?.duration ?? 0
+
+                    print("[PlayerViewModel] 📍 Track changed to index \(index), startOffset: \(self.currentTrackStartOffset)s")
                 }
                 if self.isPlaying {
                     queuePlayer.rate = self.rate
@@ -577,71 +658,130 @@ final class PlayerViewModel: NSObject, ObservableObject {
     func seek(to seconds: Double) {
         guard let player = player else { return }
 
+        print("[PlayerViewModel] 🎯 SEEK requested to \(seconds)s")
+        print("[PlayerViewModel] 🎯 Current track index: \(currentTrackIndex), startOffset: \(currentTrackStartOffset)")
+
         // For multi-track audiobooks (AVQueuePlayer), we need to find the correct track
         if let queue = player as? AVQueuePlayer, !playlist.isEmpty {
             let clampedSeconds = max(0, min(seconds, duration))
 
-            // Find which track contains this absolute time
-            var accumulatedTime: Double = 0
+            print("[PlayerViewModel] 🔍 Searching for track containing \(clampedSeconds)s")
+            print("[PlayerViewModel] 🔍 Playlist has \(playlist.count) tracks:")
+            for (i, t) in playlist.enumerated() {
+                let start = t.startOffset ?? 0
+                let dur = t.duration ?? 0
+                print("[PlayerViewModel]    Track \(i): \(t.title ?? "Untitled") - start=\(start)s, duration=\(dur)s, end=\(start + dur)s")
+            }
+
+            // Find which track contains this absolute time using startOffset
             var targetTrackIndex: Int = 0
+            var targetTrack: LibraryItem.Track? = nil
             var timeWithinTrack: Double = clampedSeconds
 
             for (index, track) in playlist.enumerated() {
+                let trackStart = track.startOffset ?? 0
                 let trackDuration = track.duration ?? 0
-                if clampedSeconds < accumulatedTime + trackDuration {
+                let trackEnd = trackStart + trackDuration
+
+                if clampedSeconds >= trackStart && clampedSeconds < trackEnd {
                     // Found the target track
                     targetTrackIndex = index
-                    timeWithinTrack = clampedSeconds - accumulatedTime
+                    targetTrack = track
+                    timeWithinTrack = clampedSeconds - trackStart
+                    print("[PlayerViewModel] ✅ Found target: Track \(index) (\(track.title ?? "Untitled"))")
+                    print("[PlayerViewModel] ✅ Time within track: \(timeWithinTrack)s")
                     break
                 }
-                accumulatedTime += trackDuration
+            }
+
+            // Fallback to last track if beyond all tracks
+            if targetTrack == nil && !playlist.isEmpty {
+                print("[PlayerViewModel] ⚠️ No track found, using last track")
+                targetTrackIndex = playlist.count - 1
+                targetTrack = playlist[targetTrackIndex]
+                let trackStart = targetTrack?.startOffset ?? 0
+                timeWithinTrack = clampedSeconds - trackStart
+            }
+
+            guard let track = targetTrack else {
+                print("[PlayerViewModel] ❌ Could not find target track for seek")
+                return
             }
 
             // Check if we need to switch tracks
             if targetTrackIndex != currentTrackIndex {
                 print("[PlayerViewModel] 🎯 Seek requires track switch: \(currentTrackIndex) -> \(targetTrackIndex)")
+                print("[PlayerViewModel]    Seeking to absolute time: \(clampedSeconds)s")
+                print("[PlayerViewModel]    Target track startOffset: \(track.startOffset ?? 0)s")
+                print("[PlayerViewModel]    Time within track: \(timeWithinTrack)s")
 
-                // Save playback state
-                let wasPlaying = isPlaying
+                // Save old index BEFORE updating
+                let oldTrackIndex = currentTrackIndex
 
-                // Create new queue starting from target track
-                let newItems = Array(playlistItems[targetTrackIndex...])
-                let newQueue = AVQueuePlayer(items: newItems)
-                newQueue.automaticallyWaitsToMinimizeStalling = true
-                newQueue.actionAtItemEnd = .advance  // Explicitly set to advance
-                self.player = newQueue
-
-                // Update track info
+                // Update track info (before seeking)
                 currentTrackIndex = targetTrackIndex
-                currentTrackTitle = playlist[safe: targetTrackIndex]?.title ?? "Track \(targetTrackIndex + 1)"
-                let start = playlist.prefix(targetTrackIndex).reduce(0.0) { $0 + ($1.duration ?? 0) }
-                let dur = playlist[safe: targetTrackIndex]?.duration ?? 0
-                currentChapterStart = start
-                currentChapterDuration = dur
+                currentTrackStartOffset = track.startOffset ?? 0
+                currentTrackTitle = track.title ?? "Track \(targetTrackIndex + 1)"
+                currentChapterStart = track.startOffset ?? 0
+                currentChapterDuration = track.duration ?? 0
 
-                // Reinstall observers for the new queue
-                setupTimeObserver()
-                setupTrackEndObserver()
-                setupRemoteCommands()
-                setupQueuePlayerObserver(newQueue)
+                // Use AVQueuePlayer's advanceToNextItem to navigate to target track
+                // This keeps the full queue intact instead of truncating it
+                if targetTrackIndex > oldTrackIndex {
+                    // Moving forward - advance to next item(s)
+                    let itemsToSkip = targetTrackIndex - oldTrackIndex
+                    print("[PlayerViewModel] ➡️ Advancing forward by \(itemsToSkip) track(s)")
+                    for _ in 0..<itemsToSkip {
+                        queue.advanceToNextItem()
+                    }
 
-                // Seek to position within the target track
-                let targetTime = CMTime(seconds: timeWithinTrack, preferredTimescale: 600)
-                newQueue.seek(to: targetTime, toleranceBefore: .zero, toleranceAfter: .zero)
-                currentTime = clampedSeconds
+                    // Seek to position within the target track
+                    let targetTime = CMTime(seconds: timeWithinTrack, preferredTimescale: 600)
+                    queue.seek(to: targetTime, toleranceBefore: .zero, toleranceAfter: .zero)
 
-                // Restore playback state
-                if wasPlaying {
-                    newQueue.play()
-                    newQueue.rate = rate
+                    updateNowPlaying()
+                } else {
+                    // Moving backward - need to recreate queue from target position
+                    // This is unavoidable as AVQueuePlayer can't go backward
+                    // But we keep ALL items from target onwards, not just target
+                    print("[PlayerViewModel] ⬅️ Moving backward, recreating queue from track \(targetTrackIndex)")
+
+                    guard targetTrackIndex < playlistItems.count else {
+                        print("[PlayerViewModel] ❌ Target track index \(targetTrackIndex) out of bounds (playlist has \(playlistItems.count) items)")
+                        return
+                    }
+
+                    let wasPlaying = isPlaying
+
+                    let newItems = Array(playlistItems[targetTrackIndex...])
+                    let newQueue = AVQueuePlayer(items: newItems)
+                    newQueue.automaticallyWaitsToMinimizeStalling = true
+                    newQueue.actionAtItemEnd = .advance
+                    self.player = newQueue
+
+                    // Reinstall observers for the new queue
+                    setupTimeObserver()
+                    setupTrackEndObserver()
+                    setupRemoteCommands()
+                    setupQueuePlayerObserver(newQueue)
+
+                    // Seek to position within track
+                    let targetTime = CMTime(seconds: timeWithinTrack, preferredTimescale: 600)
+                    newQueue.seek(to: targetTime, toleranceBefore: .zero, toleranceAfter: .zero)
+
+                    // Restore playback state
+                    if wasPlaying {
+                        newQueue.play()
+                        newQueue.rate = rate
+                    }
+
+                    updateNowPlaying()
                 }
-
-                updateNowPlaying()
             } else {
                 // Same track, just seek within it
+                print("[PlayerViewModel] 🎯 Seeking within current track to \(timeWithinTrack)s")
                 let targetTime = CMTime(seconds: timeWithinTrack, preferredTimescale: 600)
                 queue.seek(to: targetTime, toleranceBefore: .zero, toleranceAfter: .zero)
-                currentTime = clampedSeconds
                 updateNowPlaying(elapsedOnly: true)
             }
         } else {
@@ -664,47 +804,35 @@ final class PlayerViewModel: NSObject, ObservableObject {
         // Advance to the next track if using a queue; otherwise, do nothing
         guard let player = player else { return }
         if let queue = player as? AVQueuePlayer {
-            // Save playback state before advancing
-            let wasPlaying = isPlaying
-
             // Check if we can advance
-            guard let currentItem = queue.currentItem,
-                  let currentIndex = playlistItems.firstIndex(of: currentItem),
-                  currentIndex < playlistItems.count - 1 else {
-                // At the end of the queue
+            guard currentTrackIndex < playlist.count - 1 else {
                 print("[PlayerViewModel] ⏭️ Already at last track")
                 return
             }
 
-            print("[PlayerViewModel] ⏭️ Advancing to next track: \(currentIndex) -> \(currentIndex + 1)")
+            print("[PlayerViewModel] ⏭️ Advancing to next track: \(currentTrackIndex) -> \(currentTrackIndex + 1)")
 
-            // Create new queue starting from next track
-            let newItems = Array(playlistItems[(currentIndex + 1)...])
-            let newQueue = AVQueuePlayer(items: newItems)
-            newQueue.automaticallyWaitsToMinimizeStalling = true
-            newQueue.actionAtItemEnd = .advance  // Explicitly set to advance
-            self.player = newQueue
+            // Save playback state
+            let wasPlaying = isPlaying
+
+            // Use AVQueuePlayer's advanceToNextItem instead of recreating queue
+            queue.advanceToNextItem()
 
             // Update track info
-            let newIndex = currentIndex + 1
+            let newIndex = currentTrackIndex + 1
             currentTrackIndex = newIndex
-            currentTrackTitle = playlist[safe: newIndex]?.title ?? "Track \(newIndex + 1)"
-            currentTime = 0
-            let start = playlist.prefix(newIndex).reduce(0.0) { $0 + ($1.duration ?? 0) }
-            let dur = playlist[safe: newIndex]?.duration ?? 0
-            currentChapterStart = start
-            currentChapterDuration = dur
+            let track = playlist[safe: newIndex]
+            currentTrackStartOffset = track?.startOffset ?? 0
+            currentTrackTitle = track?.title ?? "Track \(newIndex + 1)"
+            currentChapterStart = track?.startOffset ?? 0
+            currentChapterDuration = track?.duration ?? 0
 
-            // Reinstall observers for the new queue
-            setupTimeObserver()
-            setupTrackEndObserver()
-            setupRemoteCommands()
-            setupQueuePlayerObserver(newQueue)
+            print("[PlayerViewModel] 📍 New track startOffset: \(currentTrackStartOffset)s")
 
             // Restore playback state
             if wasPlaying {
-                newQueue.play()
-                newQueue.rate = rate
+                queue.play()
+                queue.rate = rate
                 isPlaying = true
             } else {
                 isPlaying = false
@@ -721,68 +849,27 @@ final class PlayerViewModel: NSObject, ObservableObject {
     func previousChapter() {
         // If far enough into the current track, just restart it; otherwise go to previous
         guard let player = player else { return }
-        if let queue = player as? AVQueuePlayer {
-            guard let currentItem = queue.currentItem,
-                  let index = playlistItems.firstIndex(of: currentItem) else {
-                print("[PlayerViewModel] ⏮️ Cannot determine current track")
-                return
-            }
-
-            // Calculate absolute time to determine if we're >3s into current track
-            let absoluteTime = playlist.prefix(index).reduce(0.0) { $0 + ($1.duration ?? 0) } + currentTime
-
+        if player is AVQueuePlayer {
             // If more than 3 seconds into the current track, just restart it
-            let trackStartTime = playlist.prefix(index).reduce(0.0) { $0 + ($1.duration ?? 0) }
-            if absoluteTime - trackStartTime > 3 {
+            if currentTime - currentTrackStartOffset > 3 {
                 print("[PlayerViewModel] ⏮️ Restarting current track")
-                seek(to: trackStartTime)
+                seek(to: currentTrackStartOffset)
                 return
             }
 
             // Otherwise, go to previous track if available
-            if index > 0 {
-                print("[PlayerViewModel] ⏮️ Going to previous track: \(index) -> \(index - 1)")
+            if currentTrackIndex > 0 {
+                print("[PlayerViewModel] ⏮️ Going to previous track: \(currentTrackIndex) -> \(currentTrackIndex - 1)")
 
-                // Save playback state
-                let wasPlaying = isPlaying
-
-                // Create new queue starting from previous track
-                let newItems = Array(playlistItems[(index - 1)...])
-                let newQueue = AVQueuePlayer(items: newItems)
-                newQueue.automaticallyWaitsToMinimizeStalling = true
-                newQueue.actionAtItemEnd = .advance  // Explicitly set to advance
-                self.player = newQueue
-
-                // Update track info
-                let newIndex = index - 1
-                currentTrackIndex = newIndex
-                currentTrackTitle = playlist[safe: newIndex]?.title ?? "Track \(newIndex + 1)"
-                currentTime = 0
-                let start = playlist.prefix(newIndex).reduce(0.0) { $0 + ($1.duration ?? 0) }
-                let dur = playlist[safe: newIndex]?.duration ?? 0
-                currentChapterStart = start
-                currentChapterDuration = dur
-
-                // Reinstall observers for the new queue
-                setupTimeObserver()
-                setupTrackEndObserver()
-                setupRemoteCommands()
-                setupQueuePlayerObserver(newQueue)
-
-                // Restore playback state
-                if wasPlaying {
-                    newQueue.play()
-                    newQueue.rate = rate
-                    isPlaying = true
-                } else {
-                    isPlaying = false
+                let previousTrack = playlist[safe: currentTrackIndex - 1]
+                if let trackStartOffset = previousTrack?.startOffset {
+                    // Use seek() which now handles queue recreation properly
+                    seek(to: trackStartOffset)
                 }
-
-                updateNowPlaying()
             } else {
                 // At the start of the queue — just restart current track
                 print("[PlayerViewModel] ⏮️ Already at first track, restarting")
-                seek(to: 0)
+                seek(to: currentTrackStartOffset)
             }
         } else {
             // Single-item player: restart

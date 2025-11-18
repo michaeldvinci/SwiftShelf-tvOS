@@ -572,12 +572,13 @@ struct LibraryDetailView: View {
                                 .contentShape(Rectangle())
                                 .onTapGesture {
                                     Task {
-                                        // Load the item if not already loaded
+                                        // Load the item with explicit start time (chapter start)
                                         if audioManager.currentItem?.id != item.id {
-                                            await audioManager.loadItem(item, appVM: vm)
+                                            await audioManager.loadItem(item, appVM: vm, startTime: chapter.start)
+                                        } else {
+                                            // Item already loaded, just seek to chapter
+                                            audioManager.seek(to: chapter.start)
                                         }
-                                        // Seek to chapter start
-                                        audioManager.seek(to: chapter.start)
                                         // Start playback
                                         audioManager.play()
                                         // Close overlay
