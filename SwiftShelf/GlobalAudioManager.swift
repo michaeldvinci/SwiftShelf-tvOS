@@ -80,7 +80,7 @@ final class GlobalAudioManager: NSObject, ObservableObject {
         }
     }
     
-    func loadItem(_ item: LibraryItem, appVM: ViewModel) async {
+    func loadItem(_ item: LibraryItem, appVM: ViewModel, startTime: Double? = nil) async {
         print("===========================================")
         print("[GlobalAudioManager] 🚀🚀🚀 LOADING ITEM v2.0 🚀🚀🚀")
         print("[GlobalAudioManager] 🚀 Loading item: \(item.title)")
@@ -89,6 +89,9 @@ final class GlobalAudioManager: NSObject, ObservableObject {
         print("[GlobalAudioManager] 📊 Media present: \(item.media != nil)")
         if let media = item.media {
             print("[GlobalAudioManager] 📊 Media duration: \(media.duration.map { String($0) } ?? "nil")")
+        }
+        if let startTime = startTime {
+            print("[GlobalAudioManager] 🎯 Explicit start time requested: \(startTime)s")
         }
         print("===========================================")
 
@@ -136,8 +139,13 @@ final class GlobalAudioManager: NSObject, ObservableObject {
         print("[GlobalAudioManager] ⚙️ Configuring and preparing player...")
         await newPlayerVM.configureAndPrepare()
 
-        // Pre-fetch last progress but do not seek yet; apply on first play
-        if let last = await appVM.loadProgress(for: itemToUse) {
+        // Set pending resume position
+        if let startTime = startTime {
+            // Explicit start time provided (e.g., from chapter selection)
+            print("[GlobalAudioManager] 🎯 Using explicit start time: \(startTime)s")
+            self.pendingResumeSeconds = startTime
+        } else if let last = await appVM.loadProgress(for: itemToUse) {
+            // Resume from last position
             let resume = max(0, last - 5)
             print("[GlobalAudioManager] ⏪ Cached resume position: \(resume)s (from server: \(last)s)")
             self.pendingResumeSeconds = resume
@@ -234,6 +242,12 @@ final class GlobalAudioManager: NSObject, ObservableObject {
     func seek(to seconds: Double) {
         print("[GlobalAudioManager] ⏩ Seek to \(seconds)s requested")
         playerViewModel?.seek(to: seconds)
+
+        // Clear pending resume so play() doesn't override this manual seek
+        if pendingResumeSeconds != nil {
+            print("[GlobalAudioManager] 🧹 Clearing pending resume (was: \(pendingResumeSeconds!)s)")
+            pendingResumeSeconds = nil
+        }
 
         // NOTE: Official app does NOT sync immediately on seek
         // It waits for the next periodic sync interval (15s)

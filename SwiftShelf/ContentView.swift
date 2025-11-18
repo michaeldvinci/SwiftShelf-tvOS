@@ -1185,12 +1185,13 @@ struct ContentView: View {
                         ForEach(Array(displayItem.chapters.enumerated()), id: \.offset) { index, chapter in
                             Button {
                                 Task {
-                                    // Load the item if not already loaded
+                                    // Load the item with explicit start time (chapter start)
                                     if audioManager.currentItem?.id != displayItem.id {
-                                        await audioManager.loadItem(displayItem, appVM: vm)
+                                        await audioManager.loadItem(displayItem, appVM: vm, startTime: chapter.start)
+                                    } else {
+                                        // Item already loaded, just seek to chapter
+                                        audioManager.seek(to: chapter.start)
                                     }
-                                    // Seek to chapter start
-                                    audioManager.seek(to: chapter.start)
                                     // Start playback
                                     audioManager.play()
                                     // Switch to Now Playing tab
